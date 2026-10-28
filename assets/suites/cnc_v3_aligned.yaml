@@ -1,0 +1,24 @@
+notes: |
+  cnc-v3-paired 参照组：v3 档 + 手调后的起手位误差（横向 ≤1mm、姿态 ≤0.5°），代表今天肉眼把感知
+  偏置矩阵调到 1° 内之后的工况。与 cnc_v3 对读回答「不手调比手调差多少」；噪声不同故不与三份配对。
+motion: cnc
+realman_yaml: cnc_v3
+episodes: 50
+seed: 42
+description: CNC 参照 · v3 · 手调后误差
+overrides:
+  force:
+    sigma_pos: 1
+    sigma_rot: 0.5
+    goal_depth_offset_mm:
+      uniform: [7, 15]
+expect:
+  probe_events: true
+  zero_severe: true
+  params:
+    max_linear_speed: 0.007
+    box_feeding_approach_speed: 0.008
+    box_feeding_contact_force_line: 3.5
+    box_feeding_damping: 1000.0
+    box_feeding_probe_lift: 0.003
+    box_feeding_settle_shortfall_max: 0.025

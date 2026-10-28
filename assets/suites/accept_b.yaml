@@ -1,0 +1,35 @@
+notes: |
+  v3 验收 B：柱阵搭稳。工件卡在柱顶悬空，DUT 应一律判卡滞而非报成功。
+  σ=0 是刻意的——噪声会破坏对称搭稳前提，这份测的是几何情境下的判定正确性，
+  噪声敏感性归 accept_a。
+
+  柱高下界按 DUT 位置门算：工件自 goal 上方 40mm 起压、goal 离底 1mm，落柱顶时欠行程 ≈ 柱高 + 1mm，
+  门 25mm → 柱高 ≥ 27mm 才稳进 gate_out，取 28 留窗均噪声余量。20–26mm 段平底对平柱顶是真稳态，
+  probe 压回停点分毫不差只能判 settled，真值又是悬空，整段必落严重错误——那是 DUT 的
+  「对称卡点亚稳」前提在刚性 box 对刚性柱上不成立，不归本 suite 验。
+motion: boxfeed_b
+realman_yaml: accept_b
+episodes: 50
+seed: 43
+description: 柱阵搭稳 · 零噪声 · 柱高扫参
+overrides:
+  force:
+    sigma_pos: 0
+    sigma_rot: 0
+  scene:
+    bin.collision.pillars.height:
+      uniform: [0.028, 0.04]
+expect:
+  outcome: jam
+  probe_events: true
+  zero_severe: true
+  zero_indeterminate: true
+  params:
+    max_linear_speed: 0.01
+    box_feeding_approach_speed: 0.016
+    box_feeding_contact_force_line: 3.5
+    box_feeding_damping: 1000.0
+    box_feeding_target_force: 3.5
+    box_feeding_settle_shortfall_max: 0.025
+    box_feeding_overtravel: 0.02
+    box_feeding_probe_lift: 0.003

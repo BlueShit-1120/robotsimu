@@ -1,0 +1,156 @@
+# 柱阵料箱：工件对称搭在四根方柱顶上，看似压到位、底面实则悬空。
+#
+# 批跑用它探「误成功」——程序若判成功即严重错误。柱高与柱距的配合（对工件对称搭稳、
+# probe 微抬压回停点异常）预期须 HITL 迭代；这里的值是设计起点。
+# 位姿、工件挂载与点位同 bin_a_flat，只差 collision。
+# contact_solref 0.03 而非 A 的 0.01：MuJoCo 的接触刚度按接触点数叠加，四根柱顶给 16 个接触点、
+# 平底只有 4 个，同 solref 下柱顶硬 4 倍（静压 24.9N 穿透 0.035 vs 0.136mm），16mm/s 撞上去
+# 力峰 29N 贴 DUT 30N 上限。0.03 实测与平底柔度逐位相同，让 B 测的是几何不是刚度。
+torso_lift: 0.5
+waist_pitch: 0.29999999999999993
+fixtures:
+- name: bin
+  enabled: true
+  stl_path: ''
+  position:
+  - 0.714
+  - -0.315
+  - 1.23
+  orientation_rpy:
+  - 0.0
+  - 0.0
+  - 0.0
+  mass: 5.0
+  collision:
+    type: bin
+    inner_x: 0.14
+    inner_y: 0.12
+    wall_height: 0.08
+    wall_thickness: 0.008
+    floor_thickness: 0.008
+    pillars:
+      rows: 2
+      cols: 2
+      pitch_x: 0.06
+      pitch_y: 0.05
+      size: 0.012
+      height: 0.03
+      offset_x: 0.0
+      offset_y: 0.0
+    friction: null
+    contact_solref:
+    - 0.03
+    - 1.0
+    contact_solimp:
+    - 0.9
+    - 0.95
+    - 0.001
+    - 0.5
+    - 2.0
+base_pose:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+arms:
+  left:
+    workpiece:
+      enabled: false
+      stl_path: ''
+      d: 0.0
+      theta: 0.0
+      mass: 0.5
+      lateral:
+      - 0.0
+      - 0.0
+      - 0.0
+      tilt_rpy:
+      - 0.0
+      - 0.0
+      - 0.0
+      collision: null
+      box_size: null
+    default_pose:
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    perception_error:
+      sigma_pos: 0.0
+      sigma_rot: 0.0
+    teach_points: []
+  right:
+    workpiece:
+      enabled: true
+      stl_path: ''
+      d: 0.0
+      theta: 0.0
+      mass: 0.5
+      lateral:
+      - 0.0
+      - 0.0
+      - 0.0
+      tilt_rpy:
+      - -1.5707963267948966
+      - 0.0
+      - 0.0
+      collision: null
+      box_size:
+      - 0.1
+      - 0.08
+      - 0.04
+    default_pose:
+    - 1.47
+    - -1.15
+    - -1.52
+    - -1.67
+    - 1.07
+    - 0.06
+    - 1.11
+    perception_error:
+      sigma_pos: 0.0
+      sigma_rot: 0.0
+    teach_points:
+    - name: p_start
+      xyz:
+      - 0.38817880865078563
+      - 0.12430607204499848
+      - 0.2795043458668395
+      rpy:
+      - -89.9955426451564
+      - 89.01764623421123
+      - -162.80731199453678
+      joint:
+      - 1.426266
+      - -0.953094
+      - -1.365668
+      - -1.661164
+      - 0.950632
+      - 0.203598
+      - 1.17272
+      standoff: null
+      desc: 起手位 · 接触点正上方 106mm
+    - name: p_settled
+      xyz:
+      - 0.41950351251756635
+      - 0.023040886628249723
+      - 0.2795032756670805
+      rpy:
+      - -90.00032786881614
+      - 86.8897362647181
+      - -162.81216689764756
+      joint:
+      - 1.204289
+      - -0.918645
+      - -1.369783
+      - -1.715131
+      - 0.898502
+      - 0.203838
+      - 0.917673
+      standoff: null
+      desc: 工件平放贴底 · 摆正在箱心 · 四角间隙 1mm

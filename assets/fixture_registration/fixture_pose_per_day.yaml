@@ -1,0 +1,102 @@
+method: D5 step-3 Kabsch (solve_fixture_pose.py)
+frame: world (cnc.yaml base_pose as rig-center C, ADR-0024)
+pairs:
+- round↔pin1
+- capsule↔pin2
+- slot↔post
+days:
+  logs_20260622:
+    n: 12
+    position:
+    - -0.2068
+    - 0.2074
+    - 0.6501
+    orientation_rpy:
+    - 0.2208
+    - 0.0448
+    - -0.0111
+    residual_mm:
+    - 2.25
+    - 2.19
+    - 1.74
+    peg_hole_axis_dot: 0.998
+    delta_vs_hand:
+      pos_mm: 39.6
+      rot_deg: 2.7
+    flag: ok
+  logs_20260623:
+    n: 69
+    position:
+    - -0.2144
+    - 0.2062
+    - 0.6822
+    orientation_rpy:
+    - 0.2651
+    - 0.0428
+    - -0.002
+    residual_mm:
+    - 2.25
+    - 2.19
+    - 1.74
+    peg_hole_axis_dot: 0.998
+    delta_vs_hand:
+      pos_mm: 1.6
+      rot_deg: 0.5
+    flag: ok
+  logs_20260624:
+    n: 4
+    position:
+    - -0.2073
+    - 0.2052
+    - 0.6833
+    orientation_rpy:
+    - 0.2692
+    - 0.0372
+    - -0.0127
+    residual_mm:
+    - 2.25
+    - 2.19
+    - 1.74
+    peg_hole_axis_dot: 0.998
+    delta_vs_hand:
+      pos_mm: 10.4
+      rot_deg: 1.2
+    flag: ok
+  logs_20260625:
+    n: 7
+    position:
+    - -0.219
+    - 0.2053
+    - 0.682
+    orientation_rpy:
+    - 0.267
+    - 0.0383
+    - -0.0135
+    residual_mm:
+    - 2.25
+    - 2.19
+    - 1.74
+    peg_hole_axis_dot: 0.998
+    delta_vs_hand:
+      pos_mm: 3.8
+      rot_deg: 1.2
+    flag: ok
+  logs_20260626:
+    n: 25
+    position:
+    - -0.1839
+    - 0.2051
+    - 0.6807
+    orientation_rpy:
+    - 0.268
+    - 0.0395
+    - -0.0105
+    residual_mm:
+    - 2.25
+    - 2.19
+    - 1.74
+    peg_hole_axis_dot: 0.998
+    delta_vs_hand:
+      pos_mm: 33.0
+      rot_deg: 1.0
+    flag: ok

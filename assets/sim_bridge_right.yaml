@@ -1,0 +1,113 @@
+# sim_bridge configuration — RIGHT ARM
+# 引擎/整定参数与 sim_bridge.yaml(左臂)对齐（同一机器人模型，per-robot 值相同）。
+# 右臂特有、不与左臂共享的 3 处：
+#   1. shm_index = 2（SHM_ARM2 = 0x41524D32）
+#   2. mjcf_path = robot_right.xml（_R 臂命名）+ joint_suffix = "_R"
+#   3. wrist_ft_sensor override（覆盖 robot.xml 默认左臂 frame）
+# （base_pose 自 ADR-0027 D6 起 = 整机 base_link 世界位姿，两臂共享同值、不再 per-arm，见下。）
+# 其余字段（PD / teleop 限值 / tool_mount / LPF / 传感器名 / EE）改动请与左臂同步。
+
+# SHM slot: 1 = left arm (SHM_ARM1 = 0x41524D31)
+#           2 = right arm (SHM_ARM2 = 0x41524D32)
+shm_index: 2
+
+# 右臂专属 MJCF（tools/gen_arm_mjcf.py 从 robot.xml 派生：_L→_R 臂 token + _R 网格；
+# scaffolding 与左臂共享）。wrist_ft_sensor 仍在下方 override frame。
+# 相对路径基准 = 仓库根（同 sim_bridge.yaml 的约定，含本文件须在仓根下一层）
+mjcf_path: "assets/robot_right.xml"
+
+# Simulation timestep [seconds].  0.001 = 1000 Hz
+dt: 0.001
+
+# PD gains（与左臂一致）：τ = Kp*(q_des - q) + Kd*(0 - dq)
+joint_kp: [5000.0, 5000.0, 5000.0, 5000.0, 5000.0, 5000.0, 5000.0]
+joint_kd: [50.0,   50.0,   40.0,  30.0,  20.0,  15.0,  10.0]
+
+# ── Teleop 关节命令平滑（ADR-0015，与左臂一致）──────────────────────────────
+# TeleopPlanner 用 Ruckig OTG 把 goto 目标平滑成逐周期 q_target，避免阶跃 → PD 甩飞。
+# 单位：度（每关节 7 个值，sim 加载转弧度）；值 = 真机驱动 teleop 路径实际生效值：
+# vel / acc 出自 spiderconfig.h 表，jerk 是该路径硬编码的 10×acc（4500/9000），
+# 不是表里的 1800（ADR-0037）。保真判据 = 实测跟踪滞后 20～27 ms，改前先量。
+teleop_max_velocity:     [180.0, 180.0, 180.0, 180.0, 180.0, 180.0, 180.0]
+teleop_max_acceleration: [450.0, 450.0, 900.0, 900.0, 900.0, 900.0, 900.0]
+teleop_max_jerk:         [4500.0, 4500.0, 9000.0, 9000.0, 9000.0, 9000.0, 9000.0]
+
+# ── 柔性工装挂载（ADR-0016，与左臂一致）─────────────────────────────────────
+# workpiece 经 3 个被动平移柔性关节挂 Link7_R 下（取代刚性挂载），建模真机 F/T +
+# 工装串联柔性，使 peg 接触起始力渐变而非单帧阶跃。stiffness=1e6（2026-06-16 实验态，
+# 趋刚性真机工装 + peg lead-in；revert ladder 1e6→1e5→30000）。!! 无真机锚点，待 HITL 校准 !!
+tool_mount:
+  stiffness: 1000000
+  damping_ratio: 1.0
+
+# MuJoCo sensor names（与左臂一致，须匹配 MJCF <sensor> 名）
+ft_sensor_force_name:  "wrist_ft_force"
+ft_sensor_torque_name: "wrist_ft_torque"
+
+# Body name of the end-effector（FK 算 actual_pose_quat 用）；右臂 MJCF 用 _R 命名
+end_effector_body: "Link7_R"
+
+# 臂关节名后缀：joints = Joint1<suffix>..Joint7<suffix>（右臂 MJCF 为 _R）。
+# C++ 据此按名查关节做限位；缺省 "_L"（左臂无需设）。
+joint_suffix: "_R"
+
+# 底座是否可移动（需 robot.xml 有 freejoint）
+base_movable: true
+
+# ── 诊断开关（与左臂一致）────────────────────────────────────────────────────
+# contact_debug_log: true 时每 step 写 /tmp/sim_contact_debug.csv（接触快照，纯观测）。
+# loop_timing_log:   true 时每 iter 写 /tmp/sim_loop_timing.csv（diagnose task_tlop 队列）。
+# 平时保持 false：1kHz 追加写、启动才 truncate，桌面 app 长期驻留曾积出 104GB 塞满根盘
+# （2026-08-28）。批跑设施需要时由编排器按 episode 切段收割（sim-batch-harness 11）。
+contact_debug_log: false
+loop_timing_log: false
+
+# F/T sensor 一阶低通时间常数 (ms)。0 = 关闭。诊断确认 LPF 在反馈环内是 chatter
+# **放大器**（非 anti-chatter），故设 0.0；力 dF/帧 匹配改用 SensorModel（见左臂注释）。
+ft_lpf_tau_ms: 0.0
+
+# 底座启动位姿。6 值 x y z (m) + rx ry rz（ZYX 欧拉、弧度）。
+# ⚠️ ADR-0027 D6 语义变更：base_pose 现为**整机 base_link** 的世界位姿（freejoint
+# 根在 base_link），与左臂 sim_bridge.yaml 共享同一值、两个 yaml 必须一致。
+# 旧的右臂手调世界 base [-0.34, -0.32, 0.67, +π/2, 0, 0]（rx 翻号烤 180°）已退役——
+# 左右差异现由 MJCF 挂点表达（Base_R 的 Rx180，robot_right.xml），不再进 base_pose；
+# 臂 base = base_link ⊗ T_torso(lift) ⊗ T_waist(pitch) ⊗ mount(side)。
+# 前端 rig-center 亦以 base_link 为 C 帧派生两臂 base（main.js 不再镜像 per-arm base）。
+base_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+# ── torso/waist 载体（ADR-0027 D8，可选）────────────────────────────────────
+# 整机共享载体值，boot 时经 scene_manager CLI 烤进 MJCF 固定 body（无 joint、
+# 不占 qpos）。缺省 = 0（robot_right.xml 烤 0 值原样）。运行期改动走场景预设 + reload。
+# torso_lift:  0.0    # [0, 0.7] m
+# waist_pitch: 0.0    # [0, 0.7854] rad（0~45°）
+
+# ── 工件配置（Slice 4 schema）───────────────────────────────────────────────
+# ⚠️ 工件挂载是 per-arm 任务内容、**不**与左臂共享（场景预设中 workpiece/home_joints
+# 也按 arms.left/right 分 slot，ADR-0024 A1）。右臂场景待 P3 充实，此处留空 disabled。
+workpiece:
+  enabled: false
+  stl_path: ''
+  d: 0.0
+  theta: 0.0
+  mass: 0.5
+
+# ── 夹具配置（Slice 3 schema：多夹具列表）────────────────────────────────────
+fixtures: []
+
+# ── F/T：native-as-signal（ADR-0026；同左臂，见 sim_bridge.yaml 同段）─────────
+# SHM 写 −native，归零由 realman force_sensor_calibration 对着 sim 重标完成
+# （右臂按自己的 arm_id 写 right_ 标定文件）。sim 侧无重力注入参数。
+
+# ── wrist_ft_sensor override（右臂必填）─────────────────────────────────────
+# pos 与左臂一致（沿 link Y 轴 -42mm）。
+# quat (wxyz)：2026-07-09 帧修正——旧值 [0,0,-0.7071068,0.7071068] 让 sim 的 F/T 帧
+# 相对 realman getRef_FixedForce 重建帧（记录TCP ⊗ T_sensor_to_flange=Rz180°+38mm）
+# 差 90°（绕 Z），native-as-signal 标定残差 3.46N/|G|错。补 own-Z Rz(+90°) → 新值
+# [-0.5,-0.5,-0.5,0.5]（= 旧 override ⊗ Rz90°，与左臂 robot.xml 的 Rz+90° 同一修正）。
+# sim 内验证：realman 右臂拟合 baseline 残差 → 0.0006N、|G| 精确。上线用右臂实物复核。
+# 参见 docs/adr/0009-wrist-ft-site-vendor-calibration.md + project_ft_native_as_signal。
+wrist_ft_sensor:
+  pos:  [0.0, -0.042, 0.0]
+  quat: [-0.5, -0.5, -0.5, 0.5]   # wxyz；旧 override ⊗ own-Z Rz(+90°)，帧修正
+home_joints: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+default_scene: Sandbox

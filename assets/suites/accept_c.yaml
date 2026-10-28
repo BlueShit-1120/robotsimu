@@ -1,0 +1,38 @@
+notes: |
+  v3 验收 C：钩缘勾住。工件压得进钩下、微抬时被勾住，DUT 应判卡滞且细分为 hooked
+  （= 抬不动）。σ=0 同 accept_b。
+
+  真值侧的钩挂拉力线是 2N（判物理勾到），DUT 的 hook_pull 是 10N（判抬不动）——
+  两层刻意不同阈值，互为复核。
+
+  零行程构型：刚性悬挑板从上方压不进去，工件一开始就得在板下——motion 首步即 p_settled
+  （snap 落到板下）、standoff 4mm；板下净空 54mm 对工件顶面 40.4mm，微抬量在 accept_c 档抬到 18mm，
+  抬 13.6mm 顶板出拉力，挂住时底面离底 13.6mm → 真值悬空 + 拉力，落「正确拒绝」格。
+  工件 +x 面离箱心 65mm，overhang 8–12 → 整面啮合 3–7mm；只剩角接触（≤2mm）时勾不住会 settled。
+motion: boxfeed_c
+realman_yaml: accept_c
+episodes: 50
+seed: 44
+description: 钩缘勾住 · 零噪声 · 啮合深度扫参
+overrides:
+  force:
+    sigma_pos: 0
+    sigma_rot: 0
+  scene:
+    bin.collision.hook.overhang:
+      uniform: [0.008, 0.012]
+expect:
+  outcome: jam
+  jam_subtype: hooked
+  probe_events: true
+  zero_severe: true
+  zero_indeterminate: true
+  params:
+    max_linear_speed: 0.01
+    box_feeding_approach_speed: 0.016
+    box_feeding_contact_force_line: 3.5
+    box_feeding_damping: 1000.0
+    box_feeding_target_force: 3.5
+    box_feeding_settle_shortfall_max: 0.025
+    box_feeding_overtravel: 0.02
+    box_feeding_probe_lift: 0.018

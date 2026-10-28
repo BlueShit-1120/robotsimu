@@ -1,0 +1,23 @@
+# cnc-v3-paired 的 motion：右臂把工件压进 CNC 夹具销（scene cnc 的 P_settled 即真机座定关节位，
+# FK 在 arm base 系 (0.502, 0.233, 0.060)，与 seated_transform 0623 注册值相差约 2cm）。
+# standoff 50 = 真机 goal 距起手位的固定 50mm；进给轴 = P_settled 工具 +z（与真机孔轴点积 0.999），
+# 故退避轴 −z。sigma / goal 偏差由 suite 的 overrides.force 注入，这里全 0。
+scene: cnc
+arm: right
+steps:
+- type: move
+  goal:
+    point_ref: P_start
+- type: box_feeding
+  goal:
+    point_ref: P_settled
+    standoff: 50
+    retreat_axis: -z
+    sigma_pos: 0
+    sigma_rot: 0
+    retry: 1
+    controlmode: 40
+    debug_mode: true
+- type: move
+  goal:
+    point_ref: P_start

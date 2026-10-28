@@ -1,0 +1,141 @@
+torso_lift: 0.5
+waist_pitch: 0.29999999999999993
+fixtures:
+- name: bin
+  enabled: true
+  stl_path: ''
+  position:
+  - 0.714
+  - -0.315
+  - 1.23
+  orientation_rpy:
+  - 0.0
+  - 0.0
+  - 0.0
+  mass: 5.0
+  collision:
+    type: bin
+    inner_x: 0.14
+    inner_y: 0.12
+    wall_height: 0.08
+    wall_thickness: 0.008
+    floor_thickness: 0.008
+    pillars: null
+    hook: null
+    friction: null
+    contact_solref:
+    - 0.01
+    - 1.0
+    contact_solimp:
+    - 0.9
+    - 0.95
+    - 0.001
+    - 0.5
+    - 2.0
+base_pose:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+arms:
+  left:
+    workpiece:
+      enabled: false
+      stl_path: ''
+      d: 0.0
+      theta: 0.0
+      mass: 0.5
+      lateral:
+      - 0.0
+      - 0.0
+      - 0.0
+      tilt_rpy:
+      - 0.0
+      - 0.0
+      - 0.0
+      collision: null
+      box_size: null
+    default_pose:
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    perception_error:
+      sigma_pos: 0.0
+      sigma_rot: 0.0
+    teach_points: []
+  right:
+    workpiece:
+      enabled: true
+      stl_path: ''
+      d: 0.0
+      theta: 0.0
+      mass: 0.5
+      lateral:
+      - 0.0
+      - 0.0
+      - 0.0
+      tilt_rpy:
+      - -1.5707963267948966
+      - 0.0
+      - 0.0
+      collision: null
+      box_size:
+      - 0.1
+      - 0.08
+      - 0.04
+    default_pose:
+    - 1.47
+    - -1.15
+    - -1.52
+    - -1.67
+    - 1.07
+    - 0.06
+    - 1.11
+    perception_error:
+      sigma_pos: 0.0
+      sigma_rot: 0.0
+    teach_points:
+    - name: p_start
+      xyz:
+      - 0.38817880865078563
+      - 0.12430607204499848
+      - 0.2795043458668395
+      rpy:
+      - -89.9955426451564
+      - 89.01764623421123
+      - -162.80731199453678
+      joint:
+      - 1.426266
+      - -0.953094
+      - -1.365668
+      - -1.661164
+      - 0.950632
+      - 0.203598
+      - 1.17272
+      standoff: null
+      desc: 起手位 · 接触点正上方 106mm
+    - name: p_settled
+      xyz:
+      - 0.41950351251756635
+      - 0.023040886628249723
+      - 0.2795032756670805
+      rpy:
+      - -90.00032786881614
+      - 86.8897362647181
+      - -162.81216689764756
+      joint:
+      - 1.204289
+      - -0.918645
+      - -1.369783
+      - -1.715131
+      - 0.898502
+      - 0.203838
+      - 0.917673
+      standoff: null
+      desc: 工件平放贴底 · 摆正在箱心 · 四角间隙 1mm

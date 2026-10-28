@@ -1,0 +1,156 @@
+# 钩缘料箱：+x 壁内侧一块水平悬挑板，工件先在板下贴底、微抬时被勾住出法向拉力。
+#
+# 批跑用它验 DUT 的「抬不动」提前判卡滞分支。工件挂载与点位同 bin_a_flat；料箱比 A 向 −x
+# 挪 15mm：σ=0 时工件中心落在 A 箱心（真跑 workpiece_series 反推），+x 面到离本箱心 65mm、
+# 离壁 5mm，overhang 8–12 → 整面啮合 3–7mm（啮合只剩偏航角带来的 1–2mm 角接触时，
+# 拉力到不了 10N/50ms，勾不住）。板下净空 54mm = 工件高 40mm + 悬空 14mm：挂住时工件
+# 底面离底 >10mm，真值判悬空 + 拉力，落「正确拒绝」格而不是 3–10mm 灰带；微抬量在
+# accept_c 档抬到 18mm 才够得着板。
+#
+# 批跑中或跑完在 SCENE 面板保存本预设，会把最后一组采样的 overhang 写回来，保存前先看。
+torso_lift: 0.5
+waist_pitch: 0.29999999999999993
+fixtures:
+- name: bin
+  enabled: true
+  stl_path: ''
+  position:
+  - 0.699
+  - -0.315
+  - 1.23
+  orientation_rpy:
+  - 0.0
+  - 0.0
+  - 0.0
+  mass: 5.0
+  collision:
+    type: bin
+    inner_x: 0.14
+    inner_y: 0.12
+    wall_height: 0.08
+    wall_thickness: 0.008
+    floor_thickness: 0.008
+    pillars: null
+    hook:
+      side: +x
+      width: 0.06
+      lip_thickness: 0.006
+      overhang: 0.008
+      clearance_height: 0.054
+    friction: null
+    contact_solref:
+    - 0.01
+    - 1.0
+    contact_solimp:
+    - 0.9
+    - 0.95
+    - 0.001
+    - 0.5
+    - 2.0
+base_pose:
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+- 0.0
+arms:
+  left:
+    workpiece:
+      enabled: false
+      stl_path: ''
+      d: 0.0
+      theta: 0.0
+      mass: 0.5
+      lateral:
+      - 0.0
+      - 0.0
+      - 0.0
+      tilt_rpy:
+      - 0.0
+      - 0.0
+      - 0.0
+      collision: null
+      box_size: null
+    default_pose:
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    - 0.0
+    perception_error:
+      sigma_pos: 0.0
+      sigma_rot: 0.0
+    teach_points: []
+  right:
+    workpiece:
+      enabled: true
+      stl_path: ''
+      d: 0.0
+      theta: 0.0
+      mass: 0.5
+      lateral:
+      - 0.0
+      - 0.0
+      - 0.0
+      tilt_rpy:
+      - -1.5707963267948966
+      - 0.0
+      - 0.0
+      collision: null
+      box_size:
+      - 0.1
+      - 0.08
+      - 0.04
+    default_pose:
+    - 1.47
+    - -1.15
+    - -1.52
+    - -1.67
+    - 1.07
+    - 0.06
+    - 1.11
+    perception_error:
+      sigma_pos: 0.0
+      sigma_rot: 0.0
+    teach_points:
+    - name: p_start
+      xyz:
+      - 0.38817880865078563
+      - 0.12430607204499848
+      - 0.2795043458668395
+      rpy:
+      - -89.9955426451564
+      - 89.01764623421123
+      - -162.80731199453678
+      joint:
+      - 1.426266
+      - -0.953094
+      - -1.365668
+      - -1.661164
+      - 0.950632
+      - 0.203598
+      - 1.17272
+      standoff: null
+      desc: 起手位 · 接触点正上方 106mm
+    - name: p_settled
+      xyz:
+      - 0.41950351251756635
+      - 0.023040886628249723
+      - 0.2795032756670805
+      rpy:
+      - -90.00032786881614
+      - 86.8897362647181
+      - -162.81216689764756
+      joint:
+      - 1.204289
+      - -0.918645
+      - -1.369783
+      - -1.715131
+      - 0.898502
+      - 0.203838
+      - 0.917673
+      standoff: null
+      desc: 工件平放贴底 · 摆正在箱心 · 四角间隙 1mm

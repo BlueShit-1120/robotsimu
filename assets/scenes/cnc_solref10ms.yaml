@@ -1,0 +1,259 @@
+# 接触刚度档（内环扫描二，.scratch/inner-loop-sweep/SWEEP-2.md）：cnc 场景的复制品，销与孔两侧 contact_solref 都显式设为
+# [0.01, 1.0]。基线 cnc.yaml 只设了夹具侧 0.01、工件孔侧留 null → 软默认 0.08，MuJoCo 按 solmix 平均后有效约 0.045。
+# 其余（配准位姿、点位、工件）与 cnc.yaml 逐字相同，勿单独改；cnc.yaml 改了要同步重生成。
+fixtures:
+- name: cnc
+  enabled: true
+  stl_path: cnc_fixture_visual_nopins.STL
+  position:
+  - -0.371874
+  - 0.268039
+  - 1.146606
+  orientation_rpy:
+  - 0.463380
+  - -0.005319
+  - -0.000800
+  mass: 1.0
+  collision:
+    type: convex_pegs
+    stl_paths:
+    - fixture_peg_pin1.STL
+    - fixture_peg_pin2.STL
+    - fixture_peg_post.STL
+    - fixture_peg_lpin1.STL
+    - fixture_peg_lpin2.STL
+    - fixture_peg_lpost.STL
+    friction: null
+    contact_solref:
+    - 0.01
+    - 1.0
+    contact_solimp:
+    - 0.9
+    - 0.95
+    - 0.001
+    - 0.5
+    - 2.0
+base_pose:
+- -0.291
+- -0.547
+- 0.0
+- 0.0
+- 0.0
+- 1.5708000000000006
+torso_lift: 0.5
+waist_pitch: 0.30194196059501893
+arms:
+  left:
+    workpiece:
+      enabled: true
+      stl_path: cnc_workpiece_visual.STL
+      d: 0.0
+      theta: 0.0
+      mass: 0.5
+      lateral:
+      - 0.0
+      - -0.15
+      - 0.1
+      tilt_rpy:
+      - 0.0
+      - 1.5707963267948966
+      - 1.5707963267948966
+      collision:
+      - type: chamfered_hole
+        bore_d: 0.01095
+        chamfer_deg: 45.0
+        chamfer_depth: 0.0005
+        facets: 64
+        block_size:
+        - 0.033
+        - 0.033
+        - 0.0043
+        friction: null
+        contact_solref:
+        - 0.01
+        - 1.0
+        contact_solimp: null
+        position:
+        - -0.02698
+        - 0.07756
+        - -0.0347
+        blind: true
+        flip_z: true
+      - type: rect_slot
+        length: 0.0103
+        width: 0.016
+        chamfer_deg: 45.0
+        chamfer_depth: 0.0005
+        block_size:
+        - 0.033
+        - 0.038
+        - 0.0043
+        friction: null
+        contact_solref:
+        - 0.01
+        - 1.0
+        contact_solimp: null
+        position:
+        - -0.02698
+        - -0.05944
+        - -0.0347
+        blind: true
+        flip_z: true
+      - type: rect_slot
+        length: 0.0276
+        width: 0.0194
+        chamfer_deg: 45.0
+        chamfer_depth: 0.0005
+        block_size:
+        - 0.0476
+        - 0.0394
+        - 0.006
+        friction: null
+        contact_solref:
+        - 0.01
+        - 1.0
+        contact_solimp: null
+        position:
+        - -0.00032
+        - 0.0166
+        - -0.041
+        blind: null
+        flip_z: true
+    default_pose:
+    - 1.95
+    - 1.41
+    - -1.54
+    - -1.05
+    - -1.42
+    - -0.1
+    - -0.98
+    perception_error:
+      sigma_pos: 0.0
+      sigma_rot: 0.0
+    teach_points: []
+  right:
+    workpiece:
+      enabled: true
+      stl_path: cnc_workpiece_visual.STL
+      d: 0.0
+      theta: 0.0
+      mass: 0.5
+      lateral:
+      - 0.0
+      - -0.15
+      - 0.0
+      tilt_rpy:
+      - 1.5707963267948966
+      - 0.0
+      - 3.141592653589793
+      collision:
+      - type: chamfered_hole
+        bore_d: 0.01095
+        chamfer_deg: 45.0
+        chamfer_depth: 0.0005
+        facets: 64
+        block_size:
+        - 0.033
+        - 0.033
+        - 0.0043
+        friction: null
+        contact_solref:
+        - 0.01
+        - 1.0
+        contact_solimp: null
+        position:
+        - -0.02698
+        - 0.07756
+        - -0.0347
+        blind: true
+        flip_z: true
+      - type: rect_slot
+        length: 0.0103
+        width: 0.016
+        chamfer_deg: 45.0
+        chamfer_depth: 0.0005
+        block_size:
+        - 0.033
+        - 0.038
+        - 0.0043
+        friction: null
+        contact_solref:
+        - 0.01
+        - 1.0
+        contact_solimp: null
+        position:
+        - -0.02698
+        - -0.05944
+        - -0.0347
+        blind: true
+        flip_z: true
+      - type: rect_slot
+        length: 0.0276
+        width: 0.0194
+        chamfer_deg: 45.0
+        chamfer_depth: 0.0005
+        block_size:
+        - 0.0476
+        - 0.0394
+        - 0.006
+        friction: null
+        contact_solref:
+        - 0.01
+        - 1.0
+        contact_solimp: null
+        position:
+        - -0.00032
+        - 0.0166
+        - -0.041
+        blind: null
+        flip_z: true
+    default_pose:
+    - 1.93
+    - -1.6
+    - -1.24
+    - -1.59
+    - 1.6
+    - 0.33
+    - 1.2
+    perception_error:
+      sigma_pos: 0.0
+      sigma_rot: 0.0
+    teach_points:
+    - name: P_start
+      xyz:
+      - 0.250297
+      - 0.316698
+      - 0.059799
+      rpy:
+      - 14.1485
+      - 89.8323
+      - -35.4936
+      joint:
+      - 1.934099
+      - -1.5992
+      - -1.2445
+      - -1.587499
+      - 1.603899
+      - 0.3273
+      - 1.203299
+      standoff: null
+      desc: 初始位
+    - name: P_settled
+      xyz:
+      - 0.502206
+      - 0.232725
+      - 0.059849
+      rpy:
+      - -5.9189
+      - 89.6987
+      - -51.8420
+      joint:
+      - 1.1300999999999999
+      - -1.659986
+      - -1.299972
+      - -1.01995
+      - 1.500013
+      - 0.27998999999999996
+      - 0.910005
+      standoff: null
+      desc: 工件放入位

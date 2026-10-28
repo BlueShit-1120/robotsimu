@@ -1,0 +1,37 @@
+notes: |
+  端到端冒烟：3 组走通「标定 → 场景 → 复位 → action → 收割 → 判定 → 报告」全链。
+
+  三档各跑一组（counts 1/1/1），一遍就能看齐准/浅/深三种结局，不必等 accept_a 的 100 组。
+  σ 沿用 accept_a：噪声路径（三级 seed 树 → z6 → goal Δ）也要在冒烟里走到。
+
+  expect 只留两条自证条款：probe_events 验 debug_mode 真的写出了 run_log，
+  zero_severe 验点位摆位没把工件放成悬空。三档结局的断言归 accept_a——
+  档位跟 accept_a（−45 / 0 / +8）。
+
+  contact_debug 关着（默认）：首轮冒烟走最短路径。改成 true 会顺带验批头拷贝 baseline
+  改键重启 sim_bridge、批终恢复原 yaml 那条托管路径，单组产物涨到 21–84MB。
+motion: boxfeed_a
+realman_yaml: smoke_a
+episodes: 3
+seed: 1
+description: 端到端冒烟 · 三档各一组
+overrides:
+  force:
+    sigma_pos: 5
+    sigma_rot: 1
+    goal_depth_offset_mm:
+      choice: [0, -45, 8]
+      counts: [1, 1, 1]
+expect:
+  probe_events: true
+  zero_severe: true
+  zero_indeterminate: true
+  params:
+    max_linear_speed: 0.01
+    box_feeding_approach_speed: 0.016
+    box_feeding_contact_force_line: 3.5
+    box_feeding_damping: 1000.0
+    box_feeding_target_force: 3.5
+    box_feeding_settle_shortfall_max: 0.025
+    box_feeding_overtravel: 0.02
+    box_feeding_probe_lift: 0.003

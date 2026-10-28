@@ -1,0 +1,151 @@
+# sim_bridge configuration
+# This file mirrors the EtherCAT driver parameters for the MuJoCo simulation.
+
+# SHM slot: 1 = left arm (SHM_ARM1 = 0x41524D31)
+#           2 = right arm (SHM_ARM2 = 0x41524D32)
+shm_index: 1
+
+# Path to the robot model file.
+#   - MJCF (.xml): native MuJoCo format (recommended — supports F/T sensors)
+#   - URDF (.urdf): loaded directly by mj_loadXML (no F/T sensor support)
+#
+# 相对路径基准 = 仓库根：sim_bridge 的 cwd 由 run_sim.sh cd 锁定。
+# 绝对路径会把包钉死在 dev 机（deb 装到 /opt/spider-sim 后 dev 绝对路径不存在）。
+# 本文件须恰好在仓根下一层，且 server/ 与 assets/ 是仓根下的兄弟——场景组装按
+# <本文件父目录>/../server/lib/scene_manager.py 定位，位置不对会静默 fallback 到
+# 下面这个 mjcf_path，丢掉工件/夹具。
+mjcf_path: "assets/robot.xml"
+
+# Simulation timestep [seconds].  0.001 = 1000 Hz
+dt: 0.001
+
+# PD gains for the position controller: τ = Kp*(q_des - q) + Kd*(0 - dq)
+# Tune these per-robot: start low and increase until tracking is stable.
+joint_kp: [5000.0, 5000.0, 5000.0, 5000.0, 5000.0, 5000.0, 5000.0]
+joint_kd: [50.0,   50.0,   40.0,  30.0,  20.0,  15.0,  10.0]
+
+# ── Teleop 关节命令平滑（ADR-0015）────────────────────────────────────────────
+# TeleopPlanner 用 Ruckig 在线轨迹生成器把 task_tlop（realman）与 web goto 的
+# 关节目标平滑成逐周期 q_target，避免目标阶跃 → PD 甩飞。
+# 下面三组限值取真机驱动 teleop 路径（OnlinePlanner_Teleoperation_Ruckig）实际生效的值：
+# vel / acc 出自 spiderconfig.h 的 *_MARVIN_CCS 表；jerk 是该路径硬编码的 10×acc
+# （J1/J2 4500、J3～J7 9000），不是表里的 MAX_JOINT_JERKS 1800——teleop 路径不读那张表（ADR-0037）。
+# 单位：度（每关节 7 个值，sim 加载时转弧度）。
+# !! 保真判据 = 实测跟踪滞后：cmd→cur 沿进给轴投影，真机 20～27 ms（4.8～10 mm/s）。
+#    改任何一组前先量；jerk 每降 4 倍滞后翻倍（∝ 1/√jerk），acc 从不触顶 !!
+teleop_max_velocity:     [180.0, 180.0, 180.0, 180.0, 180.0, 180.0, 180.0]
+teleop_max_acceleration: [450.0, 450.0, 900.0, 900.0, 900.0, 900.0, 900.0]
+teleop_max_jerk:         [4500.0, 4500.0, 9000.0, 9000.0, 9000.0, 9000.0, 9000.0]
+
+# ── 柔性工装挂载（ADR-0016 / A2 修复）─────────────────────────────────────────
+# workpiece 经 3 个被动平移柔性关节挂在 Link7_L 下（取代 ADR-0011 刚性挂载），
+# 建模真机 F/T 传感器 + 工装的串联柔性，使 peg 接触起始力渐变而非单帧阶跃 →
+# realman 导纳环调得动、不被力超限 abort。scene_manager 据此生成柔性关节。
+#   stiffness     — 每个平移轴的弹簧刚度 [N/m]
+#   damping_ratio — 阻尼比 ζ；每关节 damping = 2·ζ·√(stiffness·工件质量)
+# !! 无真机锚点：stiffness 是对 a2_replay.py 回放 loop 调出的值（非物理实测）、
+#    待 HITL 终验 + 拿到真机 F/T 传感器刚度 / 接触曲线后校准 !!
+# k=3e4：回放 loop（开环、过驱）下接触起始力峰值 ~10N（远低于 15N abort 限）、
+# 首接触帧 4.7N（刚性挂载时为 33.7N）。
+tool_mount:
+  # EXPERIMENT (lead-in fidelity, 2026-06-16): stiffened 30000→1e6 toward rigid real
+  # tooling, paired with peg lead-in (re-chamfered 45°x1.5mm) + fast solref.
+  # RISK: reverts the ADR-0016 softening (rigid-mount onset was 33.7N). Revert ladder if
+  # onset force/moment-limit aborts on first contact: 1e6 → 1e5 → 30000 (orig).
+  stiffness: 1000000
+  damping_ratio: 1.0
+
+# MuJoCo sensor names (must match <sensor> names in the MJCF file).
+# These are used to populate actual_force6d in SHM.
+# Set to "" to disable (force data will be zero).
+ft_sensor_force_name:  "wrist_ft_force"
+ft_sensor_torque_name: "wrist_ft_torque"
+
+# Body name of the end-effector (used to compute actual_pose_quat via FK).
+# Must match a <body> name in the model.
+end_effector_body: "Link7_L"
+
+# 底座是否可移动（需要 robot.xml 中有 freejoint）
+base_movable: true
+
+# ── 接触诊断开关（issue 07/08）────────────────────────────────────────────────
+# 诊断用：true 时主循环每个 sim step 把一行 peg↔夹具接触快照写入
+# /tmp/sim_contact_debug.csv（启动覆盖、首行表头）。字段：step, sim_time, ncon,
+# max_penetration_m, contact_force_sum_N, contact_force_max_N, ft_fx..ft_mz,
+# peg_lin_speed_mps。用于定位接触起始 ~41 N 尖峰的根因。
+# 纯观测，不改任何接触/物理行为；false（默认）时不开文件、零额外开销。
+contact_debug_log: false
+
+# 主循环 per-iter 耗时记录（diagnose task_tlop 队列丢包）。启用后写
+# /tmp/sim_loop_timing.csv，每 iter 一行（约 23k 行/30s）。字段：
+# step, wall_us, iter_us, wakeup_late_us, consume_us, dispatch_us,
+# planner_us, mj_step_us, write_us, tlop_drained, model_reloading。
+# 用于定位 task_tlop 队列(容量2)在 burst 期间被 fill 满的真正原因。
+# 平时保持 false：该诊断已收口（ADR-0022），1kHz 追加流长驻曾积出 46GB（2026-08-28）。
+loop_timing_log: false
+
+# F/T sensor 一阶低通滤波时间常数 (ms)。模拟真机 Kunwei F/T sensor 内部
+# 滤波，让 sim 力数据 dF/帧 跟真机量级匹配（offline bench 测得 τ=3ms
+# 时 p99|dF| sim 0.65 vs real 1.17 同量级；max fz 9.19 vs real 10.74
+# 不明显衰减）。0 = 关闭。
+# 调到 10ms 尝试让 admittance 在 sim 中也能进入"持续接触"工作模式（不再
+# 接触-脱离循环）— offline 测试 τ=10ms 时 max fz 8.48N，比 τ=3ms 时
+# 更软，HITL 是否能让 admittance 不反向退让有待验证。
+#
+# ⚠️ 2026-06-15 诊断纠正（tests/bench/contact_mvp/chatter_lpf.py）：F/T LPF 在**反馈环内**
+# 引入延迟 → 导纳看到滞后力、在真实接触力已降后仍反向退让 → 过冲脱离 → 接触-脱离
+# 循环 + 力超限。LPF 不是 anti-chatter，是 chatter **放大器**：1-DOF 闭环扫 τ 显示
+# 接触-脱离 p2p 随 τ 单调上升（τ=0→6.2N，3→9.2N，10→14.6N，50→29N），τ=10ms 的
+# 14.6N 精确复现整臂 peg-in-hole run 的 fixed_fz −14.8N。故设 0.0。
+# 力 dF/帧 与真机的匹配应改用 SensorModel（Phase 3，叠在 SHM 写入端、不在反馈环）。
+ft_lpf_tau_ms: 0.0
+
+# 底座启动位姿（可选）。base_movable=true 时，启动后把底座置到此位姿，
+# 覆盖 robot.xml ready keyframe 的 base 部分（默认原点）。
+# 6 值：x y z (m) + rx ry rz（ZYX 欧拉角，弧度）—— 与 base_pose 命令同格式。
+# ⚠️ ADR-0027 D6 语义变更：base_pose 现为**整机 base_link** 的世界位姿（freejoint
+# 根已下移到 base_link），两臂共享同一值——本文件与 sim_bridge_right.yaml 必须一致。
+# 旧的 per-arm 臂 base 手调值（左 [-0.34, 0.06, 0.67, -1.5708, 0, 0]）已退役；
+# 臂 base 现由 base_link ⊗ T_torso(lift) ⊗ T_waist(pitch) ⊗ mount(side) 派生。
+# 注释掉则沿用 keyframe 默认。
+base_pose: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+# ── torso/waist 载体（ADR-0027 D8，可选）─────────────────────────────────────
+# 整机共享载体值，boot 时经 scene_manager CLI 烤进 MJCF 固定 body（无 joint、
+# 不占 qpos）。缺省 = 0（robot.xml 烤 0 值原样）。运行期改动走场景预设 + reload。
+# torso_lift:  0.0    # [0, 0.7] m
+# waist_pitch: 0.0    # [0, 0.7854] rad（0~45°）
+
+# ── 工件配置（Slice 4 schema: 刚性挂载到 Link7_L）────────────────────────────
+# 工件作为 <body name="Link7_L"> 的子 body 刚性挂载。位置用两个标量：
+#   d     — 沿工具轴（TCP_OFFSET 方向）的伸出距离 (m)
+#   theta — 绕工具轴的旋转角 (度)
+# 旧的 position / orientation_rpy 6-DoF 写法已废弃。详见 ADR-0011 决策 1/2。
+workpiece:
+  enabled: false
+  stl_path: ''
+  d: 0.0
+  theta: 0.0
+  mass: 0.5
+
+# ── 夹具配置（Slice 3 schema: 多夹具列表）────────────────────────────────────
+# fixtures 是 list，每项一个夹具，须有唯一 name（[A-Za-z0-9_-]+）。
+# 旧的单 `fixture: {...}` 写法由 yaml_migrator 自动迁移为
+# fixtures: [{name: default, ...}]。空列表表示无夹具。
+fixtures: []
+
+# ── F/T：native-as-signal（ADR-0026）────────────────────────────────────────
+# SHM 写 −native（MuJoCo 原生 F/T 取反），就是 realman 眼里的 raw：臂自重
+# （Link7_L 0.686kg → |F|=6.73N，带工件 ~11.6N）本就在读数里，跟真机 F/T 一样。
+# 归零由 realman 自己的 force_sensor_calibration action 对着跑起来的 sim 重标完成
+# （帧自洽）→ fixed = raw − comp ≈ 0。sim 侧不做任何重力注入，故本文件无相关参数。
+
+# ── wrist_ft_sensor override（可选）──────────────────────────────────────────
+# 启动时直接覆盖 robot.xml 中 wrist_ft_site 的 pos/quat。
+# 左臂保留 xml 默认值（无需此节），右臂运行时必填——参见 sim_bridge_right.yaml。
+# quat 用 wxyz 顺序；ADR-0009 描述 frame 含义。
+# wrist_ft_sensor:
+#   pos:  [0.0, -0.042, 0.0]
+#   quat: [0.7071068, 0.7071068, 0.0, 0.0]   # 左臂默认（与 xml 一致）
+home_joints: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+default_scene: Sandbox
