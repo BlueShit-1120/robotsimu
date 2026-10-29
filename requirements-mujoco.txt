@@ -1,0 +1,4 @@
+# rs-mujoco pip pins (MuJoCo 3 + Gymnasium). Prefer: conda env create -f environment-mujoco.yml
+mujoco>=3.1,<4
+gymnasium>=0.29
+numpy>=1.24,<3

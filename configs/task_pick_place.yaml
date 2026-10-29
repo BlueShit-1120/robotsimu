@@ -1,0 +1,27 @@
+# M0 task config (right-arm pick-place)
+task: pick_place
+backend: mujoco
+scene: assets/mjcf/pick_place_scene.xml
+
+control:
+  dof: 8  # right arm 7 + gripper 1
+  delta_q_scale: 0.05
+  control_hz: 50
+  frame_skip: 10
+  max_episode_steps: 400
+
+workpiece:
+  size_m: [0.05, 0.04, 0.03]  # 5×4×3 cm
+  mass_kg: 0.15
+  friction_slide: 0.6
+  spawn_xy_center: [0.55, 0.0]
+  spawn_xy_half_range: [0.06, 0.08]
+  place_goal_xy: [0.55, 0.15]
+
+frozen:
+  base: true
+  left_arm: true
+  head: true
+  wheels_steering: true
+  torso_lift: 0.5
+  waist_pitch: 0.3

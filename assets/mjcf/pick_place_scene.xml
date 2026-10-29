@@ -1,0 +1,44 @@
+<!-- M0 pick-place scene: frozen-base DVT1 (proxy gripper) + table + box workpiece.
+     Robot MJCF: robot_assemble_m0.xml (vendored robotsimu@6342d4c, patched). -->
+<mujoco model="pick_place_m0">
+  <include file="robot_assemble_m0.xml"/>
+
+  <asset>
+    <material name="table_mat" rgba="0.55 0.42 0.28 1"/>
+    <material name="box_mat" rgba="0.85 0.35 0.15 1"/>
+    <material name="goal_mat" rgba="0.2 0.75 0.35 0.35"/>
+  </asset>
+
+  <worldbody>
+    <!-- Table in front of robot (+X). Top surface z = 0.75 m (center 0.71 + half 0.04). -->
+    <body name="table" pos="0.65 0 0.71">
+      <geom name="table_top" type="box" size="0.40 0.50 0.04"
+            material="table_mat" friction="0.8 0.005 0.0001"
+            contype="1" conaffinity="1" group="1"/>
+      <geom name="table_leg_fl" type="box" size="0.03 0.03 0.335" pos=" 0.32  0.42 -0.375"
+            rgba="0.4 0.3 0.2 1" contype="0" conaffinity="0" group="1"/>
+      <geom name="table_leg_fr" type="box" size="0.03 0.03 0.335" pos=" 0.32 -0.42 -0.375"
+            rgba="0.4 0.3 0.2 1" contype="0" conaffinity="0" group="1"/>
+      <geom name="table_leg_rl" type="box" size="0.03 0.03 0.335" pos="-0.32  0.42 -0.375"
+            rgba="0.4 0.3 0.2 1" contype="0" conaffinity="0" group="1"/>
+      <geom name="table_leg_rr" type="box" size="0.03 0.03 0.335" pos="-0.32 -0.42 -0.375"
+            rgba="0.4 0.3 0.2 1" contype="0" conaffinity="0" group="1"/>
+    </body>
+
+    <!-- Workpiece: 5×4×3 cm, 0.15 kg, μ≈0.6/0.5 (D2). freejoint for 6-DoF on table. -->
+    <body name="workpiece" pos="0.55 0.0 0.765">
+      <freejoint name="workpiece_free"/>
+      <inertial pos="0 0 0" mass="0.15" diaginertia="5.0e-5 6.25e-5 6.833e-5"/>
+      <geom name="workpiece_geom" type="box" size="0.025 0.02 0.015"
+            material="box_mat" friction="0.6 0.005 0.0001"
+            solref="0.01 1" solimp="0.9 0.95 0.001"
+            contype="1" conaffinity="1" group="1"
+            density="0"/>
+      <site name="workpiece_site" pos="0 0 0" size="0.005" rgba="1 1 0 1"/>
+    </body>
+
+    <!-- Place goal marker (visual only); default goal ~0.15 m to +Y of spawn. -->
+    <site name="place_goal" pos="0.55 0.15 0.765" size="0.03 0.025 0.001"
+          type="box" material="goal_mat"/>
+  </worldbody>
+</mujoco>

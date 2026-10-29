@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "robot-simu-rl"
+version = "0.1.0"
+description = "RL pick-place for wheeled humanoid (MuJoCo M0 + Isaac Lab later)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "robot-simulation" }]
+dependencies = [
+  "mujoco>=3.1,<4",
+  "gymnasium>=0.29",
+  "numpy>=1.24,<3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+rl = ["stable-baselines3>=2.3", "torch"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+robot_simu_rl = ["py.typed"]
