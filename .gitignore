@@ -17,3 +17,9 @@ rs-mujoco/
 # MuJoCo viewer / render dumps
 *.mp4
 /tmp/
+# Local training outputs (keep tree; ignore large checkpoints by default)
+runs/**
+!runs/.gitkeep
+artifacts/**
+!artifacts/.gitkeep
+*.zip

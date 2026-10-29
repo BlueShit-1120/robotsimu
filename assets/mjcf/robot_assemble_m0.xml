@@ -418,13 +418,14 @@
     <motor name="left_arm_joint5" joint="left_arm_joint5" />
     <motor name="left_arm_joint6" joint="left_arm_joint6" />
     <motor name="left_arm_joint7" joint="left_arm_joint7" />
-    <motor name="right_arm_joint1" joint="right_arm_joint1" />
-    <motor name="right_arm_joint2" joint="right_arm_joint2" />
-    <motor name="right_arm_joint3" joint="right_arm_joint3" />
-    <motor name="right_arm_joint4" joint="right_arm_joint4" />
-    <motor name="right_arm_joint5" joint="right_arm_joint5" />
-    <motor name="right_arm_joint6" joint="right_arm_joint6" />
-    <motor name="right_arm_joint7" joint="right_arm_joint7" />
+    <!-- M1: position servos for stable right-arm reach (torque PD was gravity-drift prone) -->
+    <position name="right_arm_joint1" joint="right_arm_joint1" kp="200" kv="8" ctrlrange="-2.9322 2.9322" forcerange="-108 108" />
+    <position name="right_arm_joint2" joint="right_arm_joint2" kp="200" kv="8" ctrlrange="-2.0595 2.0595" forcerange="-108 108" />
+    <position name="right_arm_joint3" joint="right_arm_joint3" kp="150" kv="6" ctrlrange="-2.9322 2.9322" forcerange="-66 66" />
+    <position name="right_arm_joint4" joint="right_arm_joint4" kp="150" kv="6" ctrlrange="-2.4086 1.0123" forcerange="-66 66" />
+    <position name="right_arm_joint5" joint="right_arm_joint5" kp="40" kv="2" ctrlrange="-2.9322 2.9322" forcerange="-18 18" />
+    <position name="right_arm_joint6" joint="right_arm_joint6" kp="40" kv="2" ctrlrange="-1.0123 1.0123" forcerange="-18 18" />
+    <position name="right_arm_joint7" joint="right_arm_joint7" kp="40" kv="2" ctrlrange="-1.5359 1.5359" forcerange="-18 18" />
     <motor name="front_left_steering_joint" joint="front_left_steering_joint" />
     <motor name="front_left_wheel_joint" joint="front_left_wheel_joint" />
     <motor name="rear_left_steering_joint" joint="rear_left_steering_joint" />

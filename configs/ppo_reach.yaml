@@ -1,0 +1,26 @@
+# M1 C0 Reach — short PPO loop (minutes-level)
+task: reach
+backend: mujoco
+phase: reach
+
+env:
+  randomize_box: false   # C0: fixed workpiece
+  hold_gripper_open: true
+  max_episode_steps: 250
+  delta_q_scale: 0.06
+  hover_offset_m: 0.30   # raise for short train; lower toward 0.08 for grasp prep
+  success_dist_m: 0.05   # short-train gate; resume with 0.03 for plan exit
+
+ppo:
+  total_timesteps: 100000
+  learning_rate: 3.0e-4
+  n_steps: 1024
+  batch_size: 256
+  n_epochs: 10
+  gamma: 0.99
+  ent_coef: 0.01
+  device: auto  # cuda if available else cpu
+
+eval:
+  n_episodes: 10
+  success_dist_m: 0.05

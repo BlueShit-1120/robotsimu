@@ -1,9 +1,9 @@
-"""Gymnasium MuJoCo env: right-arm 7 + gripper 1 pick-place (M0)."""
+"""Gymnasium MuJoCo env: right-arm 7 + gripper 1 pick-place (M0/M1)."""
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional, SupportsFloat, Tuple
+from typing import Any, Literal, Optional, SupportsFloat, Tuple
 
 import gymnasium as gym
 import mujoco
@@ -11,7 +11,6 @@ import numpy as np
 from gymnasium import spaces
 
 from robot_simu_rl.common.joints import (
-    ARM_EFFORT,
     ARM_JOINT_LIMITS,
     GRIPPER_JOINT_LIMIT,
     LOCKED_QPOS,
@@ -19,15 +18,20 @@ from robot_simu_rl.common.joints import (
     MJCF_RIGHT_GRIPPER_JOINT,
 )
 from robot_simu_rl.common.paths import PICK_PLACE_SCENE
+from robot_simu_rl.tasks.pick_place.rewards import ReachConfig, reach_reward, reach_target
 
 # Box spawn: table center-ish with light XY randomization (meters, world frame)
-_BOX_XY_CENTER = np.array([0.55, 0.0], dtype=np.float64)
-_BOX_XY_HALF_RANGE = np.array([0.06, 0.08], dtype=np.float64)  # ±
+# Box XY near right-arm home EE projection (M1 reachability)
+_BOX_XY_CENTER = np.array([0.70, -0.20], dtype=np.float64)
+_BOX_XY_HALF_RANGE = np.array([0.05, 0.06], dtype=np.float64)  # ±
 _BOX_Z = 0.765  # table top 0.75 + half height 0.015
-_PLACE_GOAL_XY = np.array([0.55, 0.15], dtype=np.float64)
+_PLACE_GOAL_XY = np.array([0.70, 0.05], dtype=np.float64)
 
-# Default right-arm home (reach toward +X table); tuned lightly for M0 smoke
+# Default right-arm home (reachable toward +X table). M1 hover is raised so
+# the pre-grasp target sits near this EE height (see ReachConfig.hover_offset_m).
 _RIGHT_ARM_HOME = np.array([0.0, -0.6, 0.0, -1.2, 0.0, -0.4, 0.0], dtype=np.float64)
+
+CurriculumPhase = Literal["reach", "pick_place"]
 
 
 class PickPlaceMujocoEnv(gym.Env):
@@ -36,6 +40,10 @@ class PickPlaceMujocoEnv(gym.Env):
     Action (8): Δq arm(7) clipped + gripper open/close command in [0, 1]
                 (mapped to knuckle angle [0, 0.8]).
     Obs: arm q/qd (14) + grip (1) + ee pos(3)/quat(4) + box pos(3)/quat(4) + goal xy(2).
+
+    Curriculum:
+      - ``phase="reach"`` (M1/C0): reward EE→hover above box; optional open-gripper hold.
+      - ``phase="pick_place"``: legacy M0 distance-to-box shaping.
     """
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
@@ -49,6 +57,10 @@ class PickPlaceMujocoEnv(gym.Env):
         delta_q_scale: float = 0.05,
         render_mode: Optional[str] = None,
         randomize_box: bool = True,
+        phase: CurriculumPhase = "pick_place",
+        hold_gripper_open: Optional[bool] = None,
+        reach_cfg: Optional[ReachConfig] = None,
+        terminate_on_reach_success: bool = True,
     ) -> None:
         super().__init__()
         self.model_path = Path(model_path) if model_path else PICK_PLACE_SCENE
@@ -63,7 +75,16 @@ class PickPlaceMujocoEnv(gym.Env):
         self.delta_q_scale = float(delta_q_scale)
         self.render_mode = render_mode
         self.randomize_box = bool(randomize_box)
+        self.phase: CurriculumPhase = phase
+        self.reach_cfg = reach_cfg or ReachConfig()
+        # M1 default: hold gripper open so policy focuses on arm reach
+        if hold_gripper_open is None:
+            hold_gripper_open = phase == "reach"
+        self.hold_gripper_open = bool(hold_gripper_open)
+        self.terminate_on_reach_success = bool(terminate_on_reach_success)
         self._step_count = 0
+        self._reach_success_streak = 0
+        self._last_reach_dist = 0.0
         self._viewer = None
         self._renderer: Optional[mujoco.Renderer] = None
 
@@ -100,9 +121,9 @@ class PickPlaceMujocoEnv(gym.Env):
             high=np.array([1.0] * 7 + [1.0], dtype=np.float32),
             dtype=np.float32,
         )
-        # Obs dim: 14 + 1 + 3+4 + 3+4 + 2 = 31
+        # Obs dim: 14 + 1 + 3+4 + 3+4 + 2 + reach_rel(3) = 34
         self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(31,), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(34,), dtype=np.float32
         )
 
         self._place_goal = np.array(
@@ -141,6 +162,8 @@ class PickPlaceMujocoEnv(gym.Env):
             self.data.qpos[qadr] = q
             self.data.qvel[dadr] = 0.0
 
+        self._reach_success_streak = 0
+
         # Right arm home + open gripper
         for i, adr in enumerate(self._arm_qadr):
             self.data.qpos[adr] = float(
@@ -159,16 +182,25 @@ class PickPlaceMujocoEnv(gym.Env):
         box_dof = int(self.model.jnt_dofadr[self._box_jnt_id])
         self.data.qvel[box_dof : box_dof + 6] = 0.0
 
-        # Clear non-right ctrl; hold grip open
+        # Clear non-right ctrl; arm position targets = home; grip open
         self.data.ctrl[:] = 0.0
         for i, aid in enumerate(self._act_arm_ids):
-            # motor actuators: torque; start at 0
-            self.data.ctrl[aid] = 0.0
+            self.data.ctrl[aid] = float(
+                np.clip(_RIGHT_ARM_HOME[i], self._arm_low[i], self._arm_high[i])
+            )
         self.data.ctrl[self._act_grip_id] = 0.0
 
         mujoco.mj_forward(self.model, self.data)
+        # Seed potential for progress shaping
+        self._last_reach_dist = float(
+            np.linalg.norm(self.data.xpos[self._ee_body_id] - self._reach_target())
+        )
         obs = self._get_obs()
         info = self._info()
+        info["reach_success"] = False
+        info["grasp_success"] = False
+        info["place_success"] = False
+        info["phase"] = self.phase
         return obs, info
 
     def step(
@@ -176,8 +208,11 @@ class PickPlaceMujocoEnv(gym.Env):
     ) -> Tuple[np.ndarray, SupportsFloat, bool, bool, dict[str, Any]]:
         action = np.asarray(action, dtype=np.float64).reshape(8)
         action = np.clip(action, self.action_space.low, self.action_space.high)
+        if self.hold_gripper_open:
+            action = action.copy()
+            action[7] = 0.0
 
-        # Desired arm targets via incremental position; PD via torque ≈ effort * err (simple)
+        # Desired arm targets via incremental position (MJCF position actuators)
         q = np.array([self.data.qpos[a] for a in self._arm_qadr], dtype=np.float64)
         qd = q + action[:7] * self.delta_q_scale
         qd = np.clip(qd, self._arm_low, self._arm_high)
@@ -186,17 +221,10 @@ class PickPlaceMujocoEnv(gym.Env):
 
         for _ in range(self.frame_skip):
             self._apply_locks()
-            q_now = np.array([self.data.qpos[a] for a in self._arm_qadr], dtype=np.float64)
-            dq = np.array([self.data.qvel[a] for a in self._arm_vadr], dtype=np.float64)
-            # Simple PD → torque, saturated by URDF effort
-            kp = np.array([80, 80, 60, 60, 20, 20, 20], dtype=np.float64)
-            kd = np.array([4, 4, 3, 3, 1, 1, 1], dtype=np.float64)
-            tau = kp * (qd - q_now) - kd * dq
-            tau = np.clip(tau, -np.asarray(ARM_EFFORT), np.asarray(ARM_EFFORT))
-            for aid, t in zip(self._act_arm_ids, tau):
-                self.data.ctrl[aid] = float(t)
+            for aid, target in zip(self._act_arm_ids, qd):
+                self.data.ctrl[aid] = float(target)
             self.data.ctrl[self._act_grip_id] = grip_target
-            # Zero other actuators
+            # Zero other actuators (frozen DOFs held via qpos locks)
             for i in range(self.model.nu):
                 if i not in self._act_arm_ids and i != self._act_grip_id:
                     self.data.ctrl[i] = 0.0
@@ -205,13 +233,25 @@ class PickPlaceMujocoEnv(gym.Env):
         self._apply_locks()
         self._step_count += 1
         obs = self._get_obs()
-        reward = self._reward()
-        terminated = bool(self._dropped())
+        reward, reach_ok = self._compute_reward(action)
+        dropped = bool(self._dropped())
+        terminated = dropped
+        if (
+            self.phase == "reach"
+            and self.terminate_on_reach_success
+            and reach_ok
+        ):
+            self._reach_success_streak += 1
+            if self._reach_success_streak >= self.reach_cfg.success_hold_steps:
+                terminated = True
+        else:
+            self._reach_success_streak = 0
         truncated = self._step_count >= self.max_episode_steps
         info = self._info()
         info["grasp_success"] = self._grasp_success()
         info["place_success"] = False  # curriculum later (M3)
-        info["phase"] = "m0_smoke"
+        info["reach_success"] = bool(reach_ok)
+        info["phase"] = self.phase
         return obs, float(reward), terminated, truncated, info
 
     def _apply_locks(self) -> None:
@@ -239,14 +279,39 @@ class PickPlaceMujocoEnv(gym.Env):
         box_pos = self.data.xpos[self._box_body_id].copy()
         box_quat = self.data.xquat[self._box_body_id].copy()
         goal_xy = self._place_goal[:2].copy()
-        obs = np.concatenate([qn, dqn, grip, ee_pos, ee_quat, box_pos, box_quat, goal_xy])
+        reach_rel = self._reach_target() - ee_pos
+        obs = np.concatenate(
+            [qn, dqn, grip, ee_pos, ee_quat, box_pos, box_quat, goal_xy, reach_rel]
+        )
         return obs.astype(np.float32)
 
-    def _reward(self) -> float:
+    def _reach_target(self) -> np.ndarray:
+        box = self.data.xpos[self._box_body_id]
+        return reach_target(box, self.reach_cfg.hover_offset_m)
+
+    def _compute_reward(self, action: np.ndarray) -> tuple[float, bool]:
         ee = self.data.xpos[self._ee_body_id]
+        if self.phase == "reach":
+            target = self._reach_target()
+            prev = self._last_reach_dist
+            r, dist, success = reach_reward(
+                ee,
+                target,
+                action=action,
+                cfg=self.reach_cfg,
+                prev_dist=prev if self._step_count > 1 else None,
+            )
+            self._last_reach_dist = dist
+            return r, success
         box = self.data.xpos[self._box_body_id]
         dist = float(np.linalg.norm(ee - box))
-        return -dist
+        self._last_reach_dist = dist
+        return -dist, False
+
+    def _reward(self) -> float:
+        """Backward-compatible single-value reward (no action penalty)."""
+        r, _ = self._compute_reward(np.zeros(8, dtype=np.float64))
+        return r
 
     def _dropped(self) -> bool:
         z = float(self.data.xpos[self._box_body_id][2])
@@ -261,6 +326,9 @@ class PickPlaceMujocoEnv(gym.Env):
         return bool(close and grip > 0.35 and box_z > _BOX_Z + 0.03)
 
     def _info(self) -> dict[str, Any]:
+        target = self._reach_target()
+        ee = self.data.xpos[self._ee_body_id]
+        dist = float(np.linalg.norm(ee - target))
         return {
             "ee_pose": np.concatenate(
                 [self.data.xpos[self._ee_body_id], self.data.xquat[self._ee_body_id]]
@@ -268,6 +336,8 @@ class PickPlaceMujocoEnv(gym.Env):
             "object_pose": np.concatenate(
                 [self.data.xpos[self._box_body_id], self.data.xquat[self._box_body_id]]
             ).copy(),
+            "reach_target": target.copy(),
+            "reach_dist": dist,
             "place_goal": self._place_goal.copy(),
             "steps": self._step_count,
         }

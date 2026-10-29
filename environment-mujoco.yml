@@ -9,4 +9,9 @@ dependencies:
   - pip:
       - mujoco>=3.1,<4
       - gymnasium>=0.29
+      - stable-baselines3>=2.3
+      - torch
+      - tensorboard
       - -e .
+# After create, for CUDA torch instead of the default PyPI/CPU wheel:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu128
