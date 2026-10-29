@@ -1,0 +1,58 @@
+<?xml version="1.0"?>
+<robot name="sensors_perception_DVT1" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <link name="orbbec_camera_top_link">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" /> 
+            <geometry>
+                <cylinder radius="0.010" length="0.001" /> 
+            </geometry>
+            <material name="">
+                <color rgba="0.5 0.5 0.5 1" />
+            </material>
+        </visual>
+    </link>
+
+    <link name="orbbec_camera_front_link">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" /> 
+            <geometry>
+                <cylinder radius="0.010" length="0.001" /> 
+            </geometry>
+            <material name="">
+                <color rgba="0.5 0.5 0.5 1" />
+            </material>
+        </visual>
+    </link>
+    <link name="orbbec_camera_front_left_link">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" /> 
+            <geometry>
+                <cylinder radius="0.010" length="0.001" /> 
+            </geometry>
+            <material name="">
+                <color rgba="0.5 0.5 0.5 1" />
+            </material>
+        </visual>
+    </link>
+
+    <joint name="camera_link_head_to_head_link" type="fixed">
+        <parent link="head_pitch_link" />
+        <child link="orbbec_camera_top_link" />
+	    <origin xyz="0.12412  0.02332 0.01727" rpy="0 1.57079632679 0.6981" />
+    </joint>
+
+    <joint name="camera_link_chest_to_arm_link" type="fixed">
+        <parent link="right_arm_base_link" />
+        <child link="orbbec_camera_front_link" />
+        <origin xyz="0.12897 -0.02554  0.00852" rpy="0.07132 -1.21973  2.3076" />
+    </joint>
+
+
+    <joint name="camera_link_chest_to_arm_link_left" type="fixed">
+        <parent link="left_arm_base_link" />
+        <child link="orbbec_camera_front_left_link" />
+        <origin xyz="0.11748  0.01406  0.05315" rpy="-0.0427   1.23015  0.69435" />
+    </joint>
+
+</robot>

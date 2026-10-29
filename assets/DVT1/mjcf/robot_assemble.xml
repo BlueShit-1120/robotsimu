@@ -1,0 +1,550 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mujoco model="spr_robot">
+
+  <compiler angle="radian" meshdir="../meshes" balanceinertia="true" />
+
+  <!-- 接触求解器: 模型原本没有任何 option/pair/solref => 全部用默认 solref=(0.02,1)(20ms, 很软)。
+       软接触 + 持续切向载荷 => 【稳态蠕动】: 实测摩擦余量 7 倍仍以 ~3.4mm/s 恒定滑移,
+       滑移水平分量已降到 0.79mm 而竖直分量仍有 40mm => 不是库仑滑移, 是求解器软化蠕变。
+       noslip 迭代就是为消除这种情况设计的。 -->
+  <!-- noslip_iterations: 【必须 > 0】—— 它是抬起段工件蠕滑的唯一解 (2026-09-20 恢复为 20)
+       症状: 抬起段工件在爪内【恒速】下滑 ~2.3mm/s, 16s 抬起累计滑 32mm。
+             直接用 `[lift] 升降 X m / 工件高度 Y m` 核对: 命令抬 232mm, 工件只升 199mm。
+             40N 夹紧下摩擦余量约 7 倍, 所以【不是库仑滑移, 是软接触的稳态蠕变】。
+       实测 A/B (同一次构建, 6 号工件, st0.19 + grasp_offset_z=0.096):
+         noslip=0 : 滑移 32.37mm | 落位 44.49mm | yaw -22.38度 | minLift 39.2N | 墙钟  26s
+         noslip=20: 滑移  4.71mm | 落位  4.58mm | yaw -23.99度 | minLift 10.2N | 墙钟 256s
+       => 滑移降 85%, 落位精度与 yaw 一并对准(yaw 目标 -24 度)。
+       成本: 单步 0.90ms -> ~15ms (17 倍), 全程墙钟约 10 倍。
+       成本几乎全在"构建 nefc x nefc 约束矩阵"这个【固定开销】上, 与迭代次数无关
+       (nefc≈1980 时: 20 次 15.2ms/步, 1 次 12.9ms/步) => 只有关掉才能省这笔。
+       ⚠ 曾记录"noslip=20 反而更差 (place_error 72.3mm/工具残差 142mm/fail)" —— 该结论
+         已【作废】: 它是【右爪内指节卡死还没修】时测的 (见 task_config.json 里 grasp_offset_z 那段根因),
+         卡死修好(内指节穿透 0.79mm -> 离 15mm)之后 noslip=20 的落位是 4.58mm, 大幅优于
+         关掉时的 44.49mm。所以别再拿那条旧结论当依据。
+       ⚠ 副作用待查: minLift 从 39.2N 掉到 10.2N, 低于验收门限(0.5*grip_hold_newtons=20N)
+         => 程序判 fail。但实际表现全面变好(滑移 4.7mm/落位 4.58mm/yaw 精确), 弱夹持不可能
+         有这个结果; noslip 会改变接触力的分解方式, 跨 noslip 设置比较指垫力不是同类项。
+         详见 docs §5.5 的待办。 -->
+  <option noslip_iterations="20" noslip_tolerance="1e-8" />
+
+  <!-- noslip 求解器要构造 nefc x nefc 的约束矩阵(实测 nefc=1316, ncon=326);
+       MuJoCo 默认栈不够 => mj_stackAlloc overflow at mj_makeAR。加大栈。
+       (160 MB 只在加载时分配一次, 与实时率无关; noslip 开着时这块栈是必需的。) -->
+  <size nstack="20000000" />
+
+  <asset>
+    <material name="default_material" rgba="0.7 0.7 0.7 1" />
+    <!-- FT300 force-torque sensor meshes -->
+    <mesh name="ft300_sensor_vis" file="../../../ft_sensor_description/robotiq_ft_sensor/meshes/visual/robotiq_ft300.STL" />
+    <mesh name="ft300_sensor_col" file="../../../ft_sensor_description/robotiq_ft_sensor/meshes/collision/robotiq_ft300.STL" />
+    <mesh name="ft300_mounting_plate_vis" file="../../../ft_sensor_description/robotiq_ft_sensor/meshes/visual/mountings/robotiq_ft300-G-062-COUPLING_G-50-4M6-1D6_20181119.STL" />
+    <mesh name="ft300_mounting_plate_col" file="../../../ft_sensor_description/robotiq_ft_sensor/meshes/collision/mountings/robotiq_ft300-G-062-COUPLING_G-50-4M6-1D6_20181119.STL" />
+    <!-- Robotiq 2F-85 gripper meshes -->
+    <mesh name="robotiq_base_vis" file="../../../gripper_description/robotiq/meshes/visual/2f_85/robotiq_base.stl" />
+    <mesh name="robotiq_base_col" file="../../../gripper_description/robotiq/meshes/collision/2f_85/robotiq_base.stl" />
+    <mesh name="robotiq_left_knuckle_vis" file="../../../gripper_description/robotiq/meshes/visual/2f_85/left_knuckle.stl" />
+    <mesh name="robotiq_left_knuckle_col" file="../../../gripper_description/robotiq/meshes/collision/2f_85/left_knuckle.stl" />
+    <mesh name="robotiq_right_knuckle_vis" file="../../../gripper_description/robotiq/meshes/visual/2f_85/right_knuckle.stl" />
+    <mesh name="robotiq_right_knuckle_col" file="../../../gripper_description/robotiq/meshes/collision/2f_85/right_knuckle.stl" />
+    <mesh name="robotiq_left_finger_vis" file="../../../gripper_description/robotiq/meshes/visual/2f_85/left_finger.stl" />
+    <mesh name="robotiq_left_finger_col" file="../../../gripper_description/robotiq/meshes/collision/2f_85/left_finger.stl" />
+    <mesh name="robotiq_right_finger_vis" file="../../../gripper_description/robotiq/meshes/visual/2f_85/right_finger.stl" />
+    <mesh name="robotiq_right_finger_col" file="../../../gripper_description/robotiq/meshes/collision/2f_85/right_finger.stl" />
+    <mesh name="robotiq_left_finger_tip_vis" file="../../../gripper_description/robotiq/meshes/visual/2f_85/left_finger_tip.stl" />
+    <mesh name="robotiq_left_finger_tip_col" file="../../../gripper_description/robotiq/meshes/collision/2f_85/left_finger_tip.stl" />
+    <mesh name="robotiq_right_finger_tip_vis" file="../../../gripper_description/robotiq/meshes/visual/2f_85/right_finger_tip.stl" />
+    <mesh name="robotiq_right_finger_tip_col" file="../../../gripper_description/robotiq/meshes/collision/2f_85/right_finger_tip.stl" />
+    <mesh name="robotiq_left_inner_knuckle_vis" file="../../../gripper_description/robotiq/meshes/visual/2f_85/left_inner_knuckle.stl" />
+    <mesh name="robotiq_left_inner_knuckle_col" file="../../../gripper_description/robotiq/meshes/collision/2f_85/left_inner_knuckle.stl" />
+    <mesh name="robotiq_right_inner_knuckle_vis" file="../../../gripper_description/robotiq/meshes/visual/2f_85/right_inner_knuckle.stl" />
+    <mesh name="robotiq_right_inner_knuckle_col" file="../../../gripper_description/robotiq/meshes/collision/2f_85/right_inner_knuckle.stl" />
+    <mesh name="base_link_collision_base_link" file="collision/base_link.STL" />
+    <mesh name="base_link_base_link" file="visual/base_link.STL" />
+    <mesh name="torso_lift_link_collision_torso_lift_link" file="collision/torso_lift_link.STL" />
+    <mesh name="torso_lift_link_torso_lift_link" file="visual/torso_lift_link.STL" />
+    <mesh name="waist_pitch_link_collision_waist_pitch_link" file="collision/waist_pitch_link.STL" />
+    <mesh name="waist_pitch_link_waist_pitch_link" file="visual/waist_pitch_link.STL" />
+    <mesh name="head_yaw_link_collision_head_yaw_link" file="collision/head_yaw_link.STL" />
+    <mesh name="head_yaw_link_head_yaw_link" file="visual/head_yaw_link.STL" />
+    <mesh name="head_pitch_link_collision_head_pitch_link" file="collision/head_pitch_link.STL" />
+    <mesh name="head_pitch_link_head_pitch_link" file="visual/head_pitch_link.STL" /> 
+    <mesh name="left_arm_base_link_collision_Base_L" file="collision/Base_L.STL" />
+    <mesh name="left_arm_base_link_Base_L" file="visual/Base_L.STL" />
+    <mesh name="left_arm_link1_collision_Link1_L" file="collision/Link1_L.STL" />
+    <mesh name="left_arm_link1_Link1_L" file="visual/Link1_L.STL" />
+    <mesh name="left_arm_link2_collision_Link2_L" file="collision/Link2_L.STL" />
+    <mesh name="left_arm_link2_Link2_L" file="visual/Link2_L.STL" />
+    <mesh name="left_arm_link3_collision_Link3_L" file="collision/Link3_L.STL" />
+    <mesh name="left_arm_link3_Link3_L" file="visual/Link3_L.STL" />
+    <mesh name="left_arm_link4_collision_Link4_L" file="collision/Link4_L.STL" />
+    <mesh name="left_arm_link4_Link4_L" file="visual/Link4_L.STL" />
+    <mesh name="left_arm_link5_collision_Link5_L" file="collision/Link5_L.STL" />
+    <mesh name="left_arm_link5_Link5_L" file="visual/Link5_L.STL" />
+    <mesh name="left_arm_link6_collision_Link6_L" file="collision/Link6_L.STL" />
+    <mesh name="left_arm_link6_Link6_L" file="visual/Link6_L.STL" />
+    <mesh name="left_arm_link7_collision_Link7_L" file="collision/Link7_L.STL" />
+    <mesh name="left_arm_link7_Link7_L" file="visual/Link7_L.STL" />
+    <mesh name="right_arm_base_link_collision_Base_R" file="collision/Base_R.STL" />
+    <mesh name="right_arm_base_link_Base_R" file="visual/Base_R.STL" />
+    <mesh name="right_arm_link1_collision_Link1_R" file="collision/Link1_R.STL" />
+    <mesh name="right_arm_link1_Link1_R" file="visual/Link1_R.STL" />
+    <mesh name="right_arm_link2_collision_Link2_R" file="collision/Link2_R.STL" />
+    <mesh name="right_arm_link2_Link2_R" file="visual/Link2_R.STL" />
+    <mesh name="right_arm_link3_collision_Link3_R" file="collision/Link3_R.STL" />
+    <mesh name="right_arm_link3_Link3_R" file="visual/Link3_R.STL" />
+    <mesh name="right_arm_link4_collision_Link4_R" file="collision/Link4_R.STL" />
+    <mesh name="right_arm_link4_Link4_R" file="visual/Link4_R.STL" />
+    <mesh name="right_arm_link5_collision_Link5_R" file="collision/Link5_R.STL" />
+    <mesh name="right_arm_link5_Link5_R" file="visual/Link5_R.STL" />
+    <mesh name="right_arm_link6_collision_Link6_R" file="collision/Link6_R.STL" />
+    <mesh name="right_arm_link6_Link6_R" file="visual/Link6_R.STL" />
+    <mesh name="right_arm_link7_collision_Link7_R" file="collision/Link7_R.STL" />
+    <mesh name="right_arm_link7_Link7_R" file="visual/Link7_R.STL" />
+    <mesh name="front_left_steering_link_front_left_steering_link" file="visual/front_left_steering_link.STL" />
+    <mesh name="front_left_wheel_link_collision_front_left_wheel_link" file="collision/front_left_wheel_link.STL" />
+    <mesh name="front_left_wheel_link_front_left_wheel_link" file="visual/front_left_wheel_link.STL" />
+    <mesh name="rear_left_steering_link_rear_left_steering_link" file="visual/rear_left_steering_link.STL" />
+    <mesh name="rear_left_wheel_link_collision_rear_left_wheel_link" file="collision/rear_left_wheel_link.STL" />
+    <mesh name="rear_left_wheel_link_rear_left_wheel_link" file="visual/rear_left_wheel_link.STL" />
+    <mesh name="rear_right_steering_link_rear_right_steering_link" file="visual/rear_right_steering_link.STL" />
+    <mesh name="rear_right_wheel_link_collision_rear_right_wheel_link" file="collision/rear_right_wheel_link.STL" />
+    <mesh name="rear_right_wheel_link_rear_right_wheel_link" file="visual/rear_right_wheel_link.STL" />
+    <mesh name="front_right_steering_link_front_right_steering_link" file="visual/front_right_steering_link.STL" />
+    <mesh name="front_right_wheel_link_collision_front_right_wheel_link" file="collision/front_right_wheel_link.STL" />
+    <mesh name="front_right_wheel_link_front_right_wheel_link" file="visual/front_right_wheel_link.STL" />
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300" />
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2" />
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072" />
+  </asset>
+  
+  <default>
+    <default class="robot">
+      <default class="visual">
+        <geom contype="0" conaffinity="0" group="2" />
+      </default>
+      <default class="collision">
+        <geom contype="0" conaffinity="1" group="3" />
+      </default>
+    </default>
+    <default class="floor">
+      <geom type="plane" size="0 0 0.05" material="groundplane" />
+    </default>
+  </default>
+  <visual>
+    <global offwidth="3840" offheight="2160" />
+  </visual>
+  <worldbody>
+    <site name="target_site" pos="0 0 0" size="0.02" type="sphere" rgba="0 1 0 1" />
+    <body name="base_link" childclass="robot" pos="0 0 0.0001">
+      <geom name="base_link_collision" type="mesh" mesh="base_link_collision_base_link" class="collision" />
+      <geom name="base_link_visual" type="mesh" mesh="base_link_base_link" material="default_material" class="visual" />
+      <body name="torso_lift_link" pos="0.0515 0 0.5162">
+        <inertial pos="0.143922262339197 -0.00336142351625361 0.313141860680534" mass="44.231742594313" diaginertia="0.121644727803065 0.0708314502068162 0.10392843684023" />
+        <joint name="torso_lift_joint" type="slide" range="0 0.7" axis="0 0 1" />
+        <geom name="torso_lift_link_collision" type="mesh" mesh="torso_lift_link_collision_torso_lift_link" class="collision" />
+        <geom name="torso_lift_link_visual" type="mesh" mesh="torso_lift_link_torso_lift_link" material="default_material" class="visual" />
+        <body name="waist_pitch_link" pos="0.15075 0 0" quat="0.7071 -0.7071 0 0">
+          <inertial pos="0.00254954717337255 -0.340228251700189 -0.00343534842282683" mass="40.7274697938361" diaginertia="0.116313687033301 0.0993509884986623 0.0674097238371175" />
+          <joint name="waist_pitch_joint" type="hinge" range="0 0.7854" axis="0 0 1" />
+          <geom name="waist_pitch_link_collision" type="mesh" mesh="waist_pitch_link_collision_waist_pitch_link" class="collision" />
+          <geom name="waist_pitch_link_visual" type="mesh" mesh="waist_pitch_link_waist_pitch_link" material="default_material" class="visual" />
+          <body name="head_yaw_link" pos="0 -0.58 0" quat="0.7071 0.7071 0 0">
+            <inertial pos="0.00103568403456941 0.000193137983347386 -0.0716266262963405" mass="0.44247965705203" diaginertia="0.000658514368501304 0.000584916686310527 0.000325069118084803" />
+            <joint name="head_yaw_joint" type="hinge" range="-0.5236 0.5236" axis="0 0 1" />
+            <geom name="head_yaw_link_collision" type="mesh" mesh="head_yaw_link_collision_head_yaw_link" class="collision" />
+            <geom name="head_yaw_link_visual" type="mesh" mesh="head_yaw_link_head_yaw_link" material="default_material" class="visual" />
+            <body name="head_pitch_link" pos="0 0 0.0305" quat="0.7071 -0.7071 0.0001 -0.0001">
+              <inertial pos="-0.013812290230989 0.00438098778694584 0.000696183770117926" mass="1.12776683810268" diaginertia="0.000652959037481424 0.000625040286577198 0.000601370318507492" />
+              <joint name="head_pitch_joint" type="hinge" range="0 0.512" axis="0 0 1" />
+              <geom name="head_pitch_link_collision" type="mesh" mesh="head_pitch_link_collision_head_pitch_link" class="collision" />
+              <geom name="head_pitch_link_visual" type="mesh" mesh="head_pitch_link_head_pitch_link" material="default_material" class="visual" />
+              <body name="orbbec_camera_top_link" pos="0.12412  0.02332 0.01727" quat="0.6645 -0.2418 0.6645 0.2418">
+                <geom name="orbbec_camera_top_link_visual" type="cylinder" size="0.010 0.0005" material="default_material" class="visual" />
+              </body>
+            </body>
+          </body>
+          <body name="left_arm_base_link" pos="0 -0.3525 0.0355">
+            <inertial pos="0.00032267 4.798E-05 0.04066353" mass="1.1962" diaginertia="0.00107329 0.00107003 0.00127315" />
+            <geom name="left_arm_base_link_collision" type="mesh" mesh="left_arm_base_link_collision_Base_L" class="collision" />
+            <geom name="left_arm_base_link_visual" type="mesh" mesh="left_arm_base_link_Base_L" material="default_material" class="visual" />
+            <body name="left_arm_link1" pos="0 0 0.1745">
+              <inertial pos="0.00002347 0.00557150 -0.03075998" mass="1.9705" diaginertia="0.00492293 0.00526513 0.00188107" />
+              <joint name="left_arm_joint1" type="hinge" range="-2.9322 2.9322" axis="0 0 1" />
+              <geom name="left_arm_link1_collision" type="mesh" mesh="left_arm_link1_collision_Link1_L" class="collision" />
+              <geom name="left_arm_link1_visual" type="mesh" mesh="left_arm_link1_Link1_L" material="default_material" class="visual" />
+              <body name="left_arm_link2" quat="0.7071 0.7071 0 0">
+                <inertial pos="0.00013483 0.06170460 0.00950639" mass="2.24398" diaginertia="0.01194933 0.00361581 0.01098356" />
+                <joint name="left_arm_joint2" type="hinge" range="-2.0595 2.0595" axis="0 0 1" />
+                <geom name="left_arm_link2_collision" type="mesh" mesh="left_arm_link2_collision_Link2_L" class="collision" />
+                <geom name="left_arm_link2_visual" type="mesh" mesh="left_arm_link2_Link2_L" material="default_material" class="visual" />
+                <body name="left_arm_link3" pos="0 0.287 0" quat="0.7071 -0.7071 0 0">
+                  <inertial pos="0.00968562 0.00246599 -0.04627302" mass="1.9242" diaginertia="0.00718224 0.00762563 0.00178597" />
+                  <joint name="left_arm_joint3" type="hinge" range="-2.9322 2.9322" axis="0 0 1" />
+                  <geom name="left_arm_link3_collision" type="mesh" mesh="left_arm_link3_collision_Link3_L" class="collision" />
+                  <geom name="left_arm_link3_visual" type="mesh" mesh="left_arm_link3_Link3_L" material="default_material" class="visual" />
+                  <body name="left_arm_link4" pos="0.018 0 0" quat="0 0 -0.7071 0.7071">
+                    <inertial pos="0.00850411 -0.04718223 0.00941509" mass="1.6085" diaginertia="0.0058048 0.00223807 0.0053306" />
+                    <joint name="left_arm_joint4" type="hinge" range="-2.4086 1.0123" axis="0 0 1" />
+                    <geom name="left_arm_link4_collision" type="mesh" mesh="left_arm_link4_collision_Link4_L" class="collision" />
+                    <geom name="left_arm_link4_visual" type="mesh" mesh="left_arm_link4_Link4_L" material="default_material" class="visual" />
+                    <body name="left_arm_link5" pos="0.018 -0.314 0" quat="0 0 -0.7071 0.7071">
+                      <inertial pos="0.00051127 0.00101064 -0.11271739" mass="2.0883" diaginertia="0.00626603 0.00564387 0.00243632" />
+                      <joint name="left_arm_joint5" type="hinge" range="-2.9322 2.9322" axis="0 0 1" />
+                      <geom name="left_arm_link5_collision" type="mesh" mesh="left_arm_link5_collision_Link5_L" class="collision" />
+                      <geom name="left_arm_link5_visual" type="mesh" mesh="left_arm_link5_Link5_L" material="default_material" class="visual" />
+                      <body name="left_arm_link6" quat="0.5 0.5 -0.5 0.5">
+                        <inertial pos="0.00032659 0.00531336 -0.00030182" mass="0.72496" diaginertia="0.0004604 0.00051716 0.00042521" />
+                        <joint name="left_arm_joint6" type="hinge" range="-1.0123 1.0123" axis="0 0 1" />
+                        <geom name="left_arm_link6_collision" type="mesh" mesh="left_arm_link6_collision_Link6_L" class="collision" />
+                        <geom name="left_arm_link6_visual" type="mesh" mesh="left_arm_link6_Link6_L" material="default_material" class="visual" />
+                        <body name="left_arm_link7" quat="0.5 0.5 -0.5 0.5">
+                          <inertial pos="-0.00009108 -0.03153255 0.00889371" mass="0.68606" diaginertia="0.00173687 0.00089035 0.00139406" />
+                          <joint name="left_arm_joint7" type="hinge" range="-1.5359 1.5359" axis="0 0 1" />
+                          <geom name="left_arm_link7_collision" type="mesh" mesh="left_arm_link7_collision_Link7_L" class="collision" />
+                          <geom name="left_arm_link7_visual" type="mesh" mesh="left_arm_link7_Link7_L" material="default_material" class="visual" />
+                          <body name="left_arm_ee_link" pos="0.0 -0.095 0" quat="0.5 0.5 -0.5 0.5">
+                            <!-- FT300 force-torque sensor -->
+                            <body name="left_ft300_mounting_plate" quat="0.7071 0 0 0.7071">
+                              <geom name="left_ft300_mounting_plate_visual" type="mesh" mesh="ft300_mounting_plate_vis" material="default_material" class="visual" />
+                              <geom name="left_ft300_mounting_plate_collision" type="mesh" mesh="ft300_mounting_plate_col" class="collision" />
+                              <body name="left_ft300_sensor" pos="0 0 0.0415" quat="0 0 1 0">
+                                <inertial pos="0 0 -0.017" mass="0.300" diaginertia="0.000262 0.000265 0.000219" />
+                                <geom name="left_ft300_sensor_visual" type="mesh" mesh="ft300_sensor_vis" material="default_material" class="visual" />
+                                <geom name="left_ft300_sensor_collision" type="mesh" mesh="ft300_sensor_col" class="collision" />
+                                <site name="left_ft300_site" pos="0 0 0" quat="0 0.7071 0.7071 0" size="0.005" type="sphere" rgba="1 0 0 1" />
+                                <!-- Robotiq 2F-85 gripper (flipped 180° around Y so fingers point outward, away from the robot) -->
+                                <body name="left_gripper_base" pos="0 0 0" quat="0 0 1 0">
+                                  <geom name="left_gripper_base_visual" type="mesh" mesh="robotiq_base_vis" class="visual" />
+                                  <geom name="left_gripper_base_collision" type="mesh" mesh="robotiq_base_vis" class="collision" mass="0.663" />
+                                  <!-- 左指链(严格对齐 URDF robotiq_2f_85_macro.urdf.xacro):
+                                       base --left_finger_joint--> left_side(指根) --fixed--> left_finger
+                                            --left_fingertip_joint--> left_fingertip
+                                       base --left_inner_knuckle_joint--> left_inner_knuckle
+                                       平行夹持 = 指尖关节相对指根反向补偿(见文件末 equality 的 mimic)。
+                                       碰撞体直接用 visual 精细 mesh, 保持与真实指尖一致的接触面形状。 -->
+                                  <body name="left_gripper_left_side" pos="0.03060114 0 0.05490452">
+                                    <joint name="left_gripper_left_finger_joint" type="hinge" axis="0 -1 0" range="0 0.8" limited="true" damping="0.02" />
+                                    <geom name="left_gripper_left_knuckle_visual" type="mesh" mesh="robotiq_left_knuckle_vis" class="visual" />
+                                    <geom name="left_gripper_left_knuckle_collision" type="mesh" mesh="robotiq_left_knuckle_vis" class="collision" mass="0.0138" />
+                                    <body name="left_gripper_left_finger" pos="0.03152616 0 -0.00376347">
+                                      <geom name="left_gripper_left_finger_visual" type="mesh" mesh="robotiq_left_finger_vis" class="visual" />
+                                      <geom name="left_gripper_left_finger_collision" type="mesh" mesh="robotiq_left_finger_vis" class="collision" mass="0.0426" />
+                                      <body name="left_gripper_left_fingertip" pos="0.00563134 0 0.04718515">
+                                        <joint name="left_gripper_left_fingertip_joint" type="hinge" axis="0 -1 0" range="-0.8 0" limited="true" damping="0.02" />
+                                        <geom name="left_gripper_left_fingertip_visual" type="mesh" mesh="robotiq_left_finger_tip_vis" class="visual" />
+                                        <geom name="left_gripper_left_fingertip_collision" type="mesh" mesh="robotiq_left_finger_tip_vis" class="collision" mass="0.0427" />
+                                      </body>
+                                    </body>
+                                  </body>
+                                  <body name="left_gripper_left_inner_knuckle" pos="0.0127 0 0.06142">
+                                    <joint name="left_gripper_left_inner_knuckle_joint" type="hinge" axis="0 -1 0" range="0 0.8" limited="true" damping="0.02" />
+                                    <geom name="left_gripper_left_inner_knuckle_visual" type="mesh" mesh="robotiq_left_inner_knuckle_vis" class="visual" />
+                                    <!-- 内指节是连杆机构的内侧构件, 不参与对工件的夹持(否则会顶在板上
+                                         挡住垫片), 因此不参与碰撞; 视觉仍保留 -->
+                                    <geom name="left_gripper_left_inner_knuckle_collision" type="mesh" mesh="robotiq_left_inner_knuckle_vis" class="collision" mass="0.0297" />
+                                  </body>
+                                  <body name="left_gripper_right_side" pos="-0.03060114 0 0.05490452">
+                                    <joint name="left_gripper_right_finger_joint" type="hinge" axis="0 -1 0" range="-0.8 0" limited="true" damping="0.02" />
+                                    <geom name="left_gripper_right_knuckle_visual" type="mesh" mesh="robotiq_right_knuckle_vis" class="visual" />
+                                    <geom name="left_gripper_right_knuckle_collision" type="mesh" mesh="robotiq_right_knuckle_vis" class="collision" mass="0.0138" />
+                                    <body name="left_gripper_right_finger" pos="-0.03152616 0 -0.00376347">
+                                      <geom name="left_gripper_right_finger_visual" type="mesh" mesh="robotiq_right_finger_vis" class="visual" />
+                                      <geom name="left_gripper_right_finger_collision" type="mesh" mesh="robotiq_right_finger_vis" class="collision" mass="0.0426" />
+                                      <body name="left_gripper_right_fingertip" pos="-0.00563134 0 0.04718515">
+                                        <joint name="left_gripper_right_fingertip_joint" type="hinge" axis="0 -1 0" range="0 0.8" limited="true" damping="0.02" />
+                                        <geom name="left_gripper_right_fingertip_visual" type="mesh" mesh="robotiq_right_finger_tip_vis" class="visual" />
+                                        <geom name="left_gripper_right_fingertip_collision" type="mesh" mesh="robotiq_right_finger_tip_vis" class="collision" mass="0.0427" />
+                                      </body>
+                                    </body>
+                                  </body>
+                                  <body name="left_gripper_right_inner_knuckle" pos="-0.0127 0 0.06142">
+                                    <joint name="left_gripper_right_inner_knuckle_joint" type="hinge" axis="0 -1 0" range="-0.8 0" limited="true" damping="0.02" />
+                                    <geom name="left_gripper_right_inner_knuckle_visual" type="mesh" mesh="robotiq_right_inner_knuckle_vis" class="visual" />
+                                    <geom name="left_gripper_right_inner_knuckle_collision" type="mesh" mesh="robotiq_right_inner_knuckle_vis" class="collision" mass="0.0297" />
+                                  </body>
+                                </body>
+                              </body>
+                            </body>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+            <body name="orbbec_camera_front_left_link" pos="0.11748  0.01406  0.05315" quat="0.7636 -0.2127 0.5365 0.2894">
+              <geom name="orbbec_camera_front_left_link_visual" type="cylinder" size="0.010 0.0005" material="default_material" class="visual" />
+            </body>
+          </body>
+          <body name="right_arm_base_link" pos="0 -0.3525 -0.0355" quat="0 -1 0 0">
+            <inertial pos="0.00032267 4.798E-05 0.04066353" mass="1.1962" diaginertia="0.00107329 0.00107003 0.00127315" />
+            <geom name="right_arm_base_link_collision" type="mesh" mesh="right_arm_base_link_collision_Base_R" class="collision" />
+            <geom name="right_arm_base_link_visual" type="mesh" mesh="right_arm_base_link_Base_R" material="default_material" class="visual" />
+            <body name="right_arm_link1" pos="0 0 0.1745">
+              <inertial pos="0.00002347 0.00557150 -0.03075998" mass="1.9705" diaginertia="0.00492293 0.00526513 0.00188107" />
+              <joint name="right_arm_joint1" type="hinge" range="-2.9322 2.9322" axis="0 0 1" />
+              <geom name="right_arm_link1_collision" type="mesh" mesh="right_arm_link1_collision_Link1_R" class="collision" />
+              <geom name="right_arm_link1_visual" type="mesh" mesh="right_arm_link1_Link1_R" material="default_material" class="visual" />
+              <body name="right_arm_link2" quat="0.7071 0.7071 0 0">
+                <inertial pos="0.00013483 0.06170460 0.00950639" mass="2.24398" diaginertia="0.01194933 0.00361581 0.01098356" />
+                <joint name="right_arm_joint2" type="hinge" range="-2.0595 2.0595" axis="0 0 1" />
+                <geom name="right_arm_link2_collision" type="mesh" mesh="right_arm_link2_collision_Link2_R" class="collision" />
+                <geom name="right_arm_link2_visual" type="mesh" mesh="right_arm_link2_Link2_R" material="default_material" class="visual" />
+                <body name="right_arm_link3" pos="0 0.287 0" quat="0.7071 -0.7071 0 0">
+                  <inertial pos="0.00968562 0.00246599 -0.04627302" mass="1.9242" diaginertia="0.00718224 0.00762563 0.00178597" />
+                  <joint name="right_arm_joint3" type="hinge" range="-2.9322 2.9322" axis="0 0 1" />
+                  <geom name="right_arm_link3_collision" type="mesh" mesh="right_arm_link3_collision_Link3_R" class="collision" />
+                  <geom name="right_arm_link3_visual" type="mesh" mesh="right_arm_link3_Link3_R" material="default_material" class="visual" />
+                  <body name="right_arm_link4" pos="0.018 0 0" quat="0 0 -0.7071 0.7071">
+                    <inertial pos="0.00850411 -0.04718223 0.00941509" mass="1.6085" diaginertia="0.0058048 0.00223807 0.0053306" />
+                    <joint name="right_arm_joint4" type="hinge" range="-2.4086 1.0123" axis="0 0 1" />
+                    <geom name="right_arm_link4_collision" type="mesh" mesh="right_arm_link4_collision_Link4_R" class="collision" />
+                    <geom name="right_arm_link4_visual" type="mesh" mesh="right_arm_link4_Link4_R" material="default_material" class="visual" />
+                    <body name="right_arm_link5" pos="0.018 -0.314 0" quat="0 0 -0.7071 0.7071">
+                      <inertial pos="-0.00051127 -0.00101064 -0.11271739" mass="2.0883" diaginertia="0.00626603 0.00564387 0.00243632" />
+                      <joint name="right_arm_joint5" type="hinge" range="-2.9322 2.9322" axis="0 0 1" />
+                      <geom name="right_arm_link5_collision" type="mesh" mesh="right_arm_link5_collision_Link5_R" class="collision" />
+                      <geom name="right_arm_link5_visual" type="mesh" mesh="right_arm_link5_Link5_R" material="default_material" class="visual" />
+                      <body name="right_arm_link6" quat="0.5 0.5 -0.5 0.5">
+                        <inertial pos="0.00032659 -0.00531336 0.00030182" mass="0.72496" diaginertia="0.0004604 0.00051716 0.00042521" />
+                        <joint name="right_arm_joint6" type="hinge" range="-1.0123 1.0123" axis="0 0 1" />
+                        <geom name="right_arm_link6_collision" type="mesh" mesh="right_arm_link6_collision_Link6_R" class="collision" />
+                        <geom name="right_arm_link6_visual" type="mesh" mesh="right_arm_link6_Link6_R" material="default_material" class="visual" />
+                        <body name="right_arm_link7" quat="0.5 0.5 -0.5 0.5">
+                          <inertial pos="-0.00009108 -0.03153255 0.00889371" mass="0.68606" diaginertia="0.00173687 0.00089035 0.00139406" />
+                          <joint name="right_arm_joint7" type="hinge" range="-1.5359 1.5359" axis="0 0 1" />
+                          <geom name="right_arm_link7_collision" type="mesh" mesh="right_arm_link7_collision_Link7_R" class="collision" />
+                          <geom name="right_arm_link7_visual" type="mesh" mesh="right_arm_link7_Link7_R" material="default_material" class="visual" />
+                          <body name="right_arm_ee_link" pos="0.0 -0.095 0" quat="0.5 0.5 -0.5 0.5">
+                            <!-- FT300 force-torque sensor -->
+                            <body name="right_ft300_mounting_plate" quat="0.7071 0 0 -0.7071">
+                              <geom name="right_ft300_mounting_plate_visual" type="mesh" mesh="ft300_mounting_plate_vis" material="default_material" class="visual" />
+                              <geom name="right_ft300_mounting_plate_collision" type="mesh" mesh="ft300_mounting_plate_col" class="collision" />
+                              <body name="right_ft300_sensor" pos="0 0 0.0415" quat="0 0 1 0">
+                                <inertial pos="0 0 -0.017" mass="0.300" diaginertia="0.000262 0.000265 0.000219" />
+                                <geom name="right_ft300_sensor_visual" type="mesh" mesh="ft300_sensor_vis" material="default_material" class="visual" />
+                                <geom name="right_ft300_sensor_collision" type="mesh" mesh="ft300_sensor_col" class="collision" />
+                                <site name="right_ft300_site" pos="0 0 0" quat="0 0.7071 0.7071 0" size="0.005" type="sphere" rgba="1 0 0 1" />
+                                <!-- Robotiq 2F-85 gripper (flipped 180° around Y so fingers point outward, away from the robot) -->
+                                <body name="right_gripper_base" pos="0 0 0" quat="0 0 1 0">
+                                  <geom name="right_gripper_base_visual" type="mesh" mesh="robotiq_base_vis" class="visual" />
+                                  <geom name="right_gripper_base_collision" type="mesh" mesh="robotiq_base_vis" class="collision" mass="0.663" />
+                                  <!-- 右指链: 结构与左夹爪完全一致(见左夹爪注释) -->
+                                  <body name="right_gripper_left_side" pos="0.03060114 0 0.05490452">
+                                    <joint name="right_gripper_left_finger_joint" type="hinge" axis="0 -1 0" range="0 0.8" limited="true" damping="0.02" />
+                                    <geom name="right_gripper_left_knuckle_visual" type="mesh" mesh="robotiq_left_knuckle_vis" class="visual" />
+                                    <geom name="right_gripper_left_knuckle_collision" type="mesh" mesh="robotiq_left_knuckle_vis" class="collision" mass="0.0138" />
+                                    <body name="right_gripper_left_finger" pos="0.03152616 0 -0.00376347">
+                                      <geom name="right_gripper_left_finger_visual" type="mesh" mesh="robotiq_left_finger_vis" class="visual" />
+                                      <geom name="right_gripper_left_finger_collision" type="mesh" mesh="robotiq_left_finger_vis" class="collision" mass="0.0426" />
+                                      <body name="right_gripper_left_fingertip" pos="0.00563134 0 0.04718515">
+                                        <joint name="right_gripper_left_fingertip_joint" type="hinge" axis="0 -1 0" range="-0.8 0" limited="true" damping="0.02" />
+                                        <geom name="right_gripper_left_fingertip_visual" type="mesh" mesh="robotiq_left_finger_tip_vis" class="visual" />
+                                        <geom name="right_gripper_left_fingertip_collision" type="mesh" mesh="robotiq_left_finger_tip_vis" class="collision" mass="0.0427" />
+                                      </body>
+                                    </body>
+                                  </body>
+                                  <body name="right_gripper_left_inner_knuckle" pos="0.0127 0 0.06142">
+                                    <joint name="right_gripper_left_inner_knuckle_joint" type="hinge" axis="0 -1 0" range="0 0.8" limited="true" damping="0.02" />
+                                    <geom name="right_gripper_left_inner_knuckle_visual" type="mesh" mesh="robotiq_left_inner_knuckle_vis" class="visual" />
+                                    <geom name="right_gripper_left_inner_knuckle_collision" type="mesh" mesh="robotiq_left_inner_knuckle_vis" class="collision" mass="0.0297" />
+                                  </body>
+                                  <body name="right_gripper_right_side" pos="-0.03060114 0 0.05490452">
+                                    <joint name="right_gripper_right_finger_joint" type="hinge" axis="0 -1 0" range="-0.8 0" limited="true" damping="0.02" />
+                                    <geom name="right_gripper_right_knuckle_visual" type="mesh" mesh="robotiq_right_knuckle_vis" class="visual" />
+                                    <geom name="right_gripper_right_knuckle_collision" type="mesh" mesh="robotiq_right_knuckle_vis" class="collision" mass="0.0138" />
+                                    <body name="right_gripper_right_finger" pos="-0.03152616 0 -0.00376347">
+                                      <geom name="right_gripper_right_finger_visual" type="mesh" mesh="robotiq_right_finger_vis" class="visual" />
+                                      <geom name="right_gripper_right_finger_collision" type="mesh" mesh="robotiq_right_finger_vis" class="collision" mass="0.0426" />
+                                      <body name="right_gripper_right_fingertip" pos="-0.00563134 0 0.04718515">
+                                        <joint name="right_gripper_right_fingertip_joint" type="hinge" axis="0 -1 0" range="0 0.8" limited="true" damping="0.02" />
+                                        <geom name="right_gripper_right_fingertip_visual" type="mesh" mesh="robotiq_right_finger_tip_vis" class="visual" />
+                                        <geom name="right_gripper_right_fingertip_collision" type="mesh" mesh="robotiq_right_finger_tip_vis" class="collision" mass="0.0427" />
+                                      </body>
+                                    </body>
+                                  </body>
+                                  <body name="right_gripper_right_inner_knuckle" pos="-0.0127 0 0.06142">
+                                    <joint name="right_gripper_right_inner_knuckle_joint" type="hinge" axis="0 -1 0" range="-0.8 0" limited="true" damping="0.02" />
+                                    <geom name="right_gripper_right_inner_knuckle_visual" type="mesh" mesh="robotiq_right_inner_knuckle_vis" class="visual" />
+                                    <geom name="right_gripper_right_inner_knuckle_collision" type="mesh" mesh="robotiq_right_inner_knuckle_vis" class="collision" mass="0.0297" />
+                                  </body>
+                                </body>
+                              </body>
+                            </body>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+            <body name="orbbec_camera_front_link" pos="0.12897 -0.02554  0.00852" quat="0.3131 0.5352 -0.2051 0.7573">
+              <geom name="orbbec_camera_front_link_visual" type="cylinder" size="0.010 0.0005" material="default_material" class="visual" />
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="front_left_steering_link" pos="0.25 0.22 0.2062" quat="0.7071 0 0 -0.7071">
+        <inertial pos="0.0205992624045541 0.00468504809309161 -0.107481104579057" mass="2.32568231003998" diaginertia="0.00598537473888009 0.00320971635617391 0.00342258236599645" />
+        <joint name="front_left_steering_joint" type="hinge" range="-3.14 3.14" axis="0 0 1" />
+        <geom name="front_left_steering_link_visual" type="mesh" mesh="front_left_steering_link_front_left_steering_link" material="default_material" class="visual" />
+        <body name="front_left_wheel_link" pos="-0.0349 4.0149E-05 -0.13113" quat="0.5 -0.5 -0.5 0.5">
+          <inertial pos="-3.09058334480028E-13 7.44774093604239E-06 -0.0364861498420292" mass="1.411015024592" diaginertia="0.00282073641838931 0.00282079428097575 0.00521417462995897" />
+          <joint name="front_left_wheel_joint" type="hinge" range="-2 2" axis="0 0 1" />
+          <geom name="front_left_wheel_link_collision" type="mesh" mesh="front_left_wheel_link_collision_front_left_wheel_link" class="collision" />
+          <geom name="front_left_wheel_link_visual" type="mesh" mesh="front_left_wheel_link_front_left_wheel_link" material="default_material" class="visual" />
+        </body>
+      </body>
+      <body name="rear_left_steering_link" pos="-0.25 0.22 0.2062" quat="0.7071 0 0 -0.7071">
+        <inertial pos="0.0205450580095932 -0.00468001330493054 -0.107708382831222" mass="2.32579537471217" diaginertia="0.00598555270233527 0.00320977903773845 0.00342275124462993" />
+        <joint name="rear_left_steering_joint" type="hinge" range="-3.14 3.14" axis="0 0 1" />
+        <geom name="rear_left_steering_link_visual" type="mesh" mesh="rear_left_steering_link_rear_left_steering_link" material="default_material" class="visual" />
+        <body name="rear_left_wheel_link" pos="-0.035 -4.016E-05 -0.13133" quat="0.5 -0.5 -0.5 0.5">
+          <inertial pos="-3.09141601206875E-13 7.44898442558983E-06 -0.0364861468950035" mass="1.41101515503141" diaginertia="0.00282073631254106 0.00282079428340617 0.00521417452449978" />
+          <joint name="rear_left_wheel_joint" type="hinge" range="-2 2" axis="0 0 1" />
+          <geom name="rear_left_wheel_link_collision" type="mesh" mesh="rear_left_wheel_link_collision_rear_left_wheel_link" class="collision" />
+          <geom name="rear_left_wheel_link_visual" type="mesh" mesh="rear_left_wheel_link_rear_left_wheel_link" material="default_material" class="visual" />
+        </body>
+      </body>
+      <body name="rear_right_steering_link" pos="-0.25 -0.22 0.2062" quat="0.7071 0 0 -0.7071">
+        <inertial pos="-0.021929848229548 -0.00456095295992581 -0.106263512312127" mass="2.41446952310048" diaginertia="0.0059877605537635 0.00321636817837239 0.00343060809385886" />
+        <joint name="rear_right_steering_joint" type="hinge" range="-3.14 3.14" axis="0 0 1" />
+        <geom name="rear_right_steering_link_visual" type="mesh" mesh="rear_right_steering_link_rear_right_steering_link" material="default_material" class="visual" />
+        <body name="rear_right_wheel_link" pos="0.0349 -4.0149E-05 -0.13113" quat="0.4993 -0.5008 -0.4992 0.5007">
+          <inertial pos="-6.45821619371656E-06 7.42263515708663E-06 0.0364861492755782" mass="1.41101502459199" diaginertia="0.00282073691169224 0.00282079389147958 0.0052141745261522" />
+          <joint name="rear_right_wheel_joint" type="hinge" range="-2 2" axis="0 0 1" />
+          <geom name="rear_right_wheel_link_collision" type="mesh" mesh="rear_right_wheel_link_collision_rear_right_wheel_link" class="collision" />
+          <geom name="rear_right_wheel_link_visual" type="mesh" mesh="rear_right_wheel_link_rear_right_wheel_link" material="default_material" class="visual" />
+        </body>
+      </body>
+      <body name="front_right_steering_link" pos="0.25 -0.22 0.2062" quat="0.7071 0 0 -0.7071">
+        <inertial pos="-0.0221242295556415 0.00450143812987197 -0.106601258746997" mass="2.43302464469444" diaginertia="0.00598882314134239 0.00321815569709526 0.00343167644417135" />
+        <joint name="front_right_steering_joint" type="hinge" range="-3.14 3.14" axis="0 0 1" />
+        <geom name="front_right_steering_link_visual" type="mesh" mesh="front_right_steering_link_front_right_steering_link" material="default_material" class="visual" />
+        <body name="front_right_wheel_link" pos="0.035 4.016E-05 -0.13133" quat="0.5007 0.4992 -0.5008 -0.4993">
+          <inertial pos="8.10250486529829E-06 -7.42733616364288E-06 0.0364861459997523" mass="1.41101515503141" diaginertia="0.00282073673721469 0.00282079394699458 0.00521417443623775" />
+          <joint name="front_right_wheel_joint" type="hinge" range="-2 2" axis="0 0 1" />
+          <geom name="front_right_wheel_link_collision" type="mesh" mesh="front_right_wheel_link_collision_front_right_wheel_link" class="collision" />
+          <geom name="front_right_wheel_link_visual" type="mesh" mesh="front_right_wheel_link_front_right_wheel_link" material="default_material" class="visual" />
+        </body>
+      </body>
+      <body name="imu" pos="0 0 0.2463">
+        <geom name="imu_visual" type="cylinder" size="0.010 0.0005" material="default_material" class="visual" />
+      </body>
+      <body name="laser_front" pos="0.22295 0.22116 0.35238" quat="0.9239 0 0 0.3827">
+        <geom name="laser_front_visual" type="cylinder" size="0.010 0.0005" material="default_material" class="visual" />
+      </body>
+      <body name="laser_back" pos="-0.24756 -0.22068 0.37574" quat="0.3827 0 0 -0.9239">
+        <geom name="laser_back_visual" type="cylinder" size="0.010 0.0005" material="default_material" class="visual" />
+      </body>
+      <body name="laser_top" pos="0.04697 0 1.41933" quat="0.9936 0 -0.1132 0">
+        <geom name="laser_top_visual" type="cylinder" size="0.010 0.0005" material="default_material" class="visual" />
+      </body>
+      <body name="berxel_camera/berxel_base_link" pos="0.37365 -0.010 0.21941" quat="0.7071 0 0.7071 0">
+        <geom name="berxel_camera/berxel_base_link_visual" type="cylinder" size="0.010 0.0005" material="default_material" class="visual" />
+      </body>
+      <freejoint name="floating_base" />
+    </body>
+
+    <!-- ==================== 料框与长条工件 ====================
+         由文件末尾的 <include file="../../../scene/scene_containers.xml" /> 引入
+         ★ 2026-09-23: 场景文件已搬到仓库根的 scene/ (零件资源同目录: scene/64K92/ 等)。
+           include 的相对路径按【本文件所在目录】解析(实测, 与工作目录无关)。 -->
+    <light pos="0 0 2." dir="0 0 -1" directional="true" />
+    <geom name="floor" class="floor" size="0 0 0.05" />
+  </worldbody>
+
+  <actuator>
+    <motor name="torso_lift_joint" joint="torso_lift_joint" />
+    <motor name="waist_pitch_joint" joint="waist_pitch_joint" />
+    <motor name="head_yaw_joint" joint="head_yaw_joint" />
+    <motor name="head_pitch_joint" joint="head_pitch_joint" />
+    <motor name="left_arm_joint1" joint="left_arm_joint1" />
+    <motor name="left_arm_joint2" joint="left_arm_joint2" />
+    <motor name="left_arm_joint3" joint="left_arm_joint3" />
+    <motor name="left_arm_joint4" joint="left_arm_joint4" />
+    <motor name="left_arm_joint5" joint="left_arm_joint5" />
+    <motor name="left_arm_joint6" joint="left_arm_joint6" />
+    <motor name="left_arm_joint7" joint="left_arm_joint7" />
+    <motor name="right_arm_joint1" joint="right_arm_joint1" />
+    <motor name="right_arm_joint2" joint="right_arm_joint2" />
+    <motor name="right_arm_joint3" joint="right_arm_joint3" />
+    <motor name="right_arm_joint4" joint="right_arm_joint4" />
+    <motor name="right_arm_joint5" joint="right_arm_joint5" />
+    <motor name="right_arm_joint6" joint="right_arm_joint6" />
+    <motor name="right_arm_joint7" joint="right_arm_joint7" />
+    <motor name="front_left_steering_joint" joint="front_left_steering_joint" />
+    <motor name="front_left_wheel_joint" joint="front_left_wheel_joint" />
+    <motor name="rear_left_steering_joint" joint="rear_left_steering_joint" />
+    <motor name="rear_left_wheel_joint" joint="rear_left_wheel_joint" />
+    <motor name="rear_right_steering_joint" joint="rear_right_steering_joint" />
+    <motor name="rear_right_wheel_joint" joint="rear_right_wheel_joint" />
+    <motor name="front_right_steering_joint" joint="front_right_steering_joint" />
+    <motor name="front_right_wheel_joint" joint="front_right_wheel_joint" />
+    <position name="left_gripper" joint="left_gripper_left_finger_joint" kp="50" />
+    <position name="right_gripper" joint="right_gripper_left_finger_joint" kp="50" />
+  </actuator>
+  <equality>
+    <!-- 2F-85 平行四连杆的 mimic 关系(等价于 URDF 的 <mimic>, 驱动关节都是 *_gripper_left_finger_joint):
+         约束形式 joint1 = polycoef[1] * joint2 -->
+    <!-- 左右指根镜像闭合 -->
+    <joint joint1="left_gripper_right_finger_joint" joint2="left_gripper_left_finger_joint" polycoef="0 -1 0 0 0" solref="0.004 1" solimp="0.99 0.999 0.001" />
+    <joint joint1="right_gripper_right_finger_joint" joint2="right_gripper_left_finger_joint" polycoef="0 -1 0 0 0" solref="0.004 1" solimp="0.99 0.999 0.001" />
+    <!-- 指尖反向补偿: 指根 +q, 指尖相对指根 -q => 指尖绝对姿态恒定 => 两指始终平行 -->
+    <joint joint1="left_gripper_left_fingertip_joint" joint2="left_gripper_left_finger_joint" polycoef="0 -1 0 0 0" solref="0.004 1" solimp="0.99 0.999 0.001" />
+    <joint joint1="left_gripper_right_fingertip_joint" joint2="left_gripper_left_finger_joint" polycoef="0 1 0 0 0" solref="0.004 1" solimp="0.99 0.999 0.001" />
+    <joint joint1="right_gripper_left_fingertip_joint" joint2="right_gripper_left_finger_joint" polycoef="0 -1 0 0 0" solref="0.004 1" solimp="0.99 0.999 0.001" />
+    <joint joint1="right_gripper_right_fingertip_joint" joint2="right_gripper_left_finger_joint" polycoef="0 1 0 0 0" solref="0.004 1" solimp="0.99 0.999 0.001" />
+    <!-- 内指节随动 -->
+    <joint joint1="left_gripper_left_inner_knuckle_joint" joint2="left_gripper_left_finger_joint" polycoef="0 1 0 0 0" solref="0.004 1" solimp="0.99 0.999 0.001" />
+    <joint joint1="left_gripper_right_inner_knuckle_joint" joint2="left_gripper_left_finger_joint" polycoef="0 -1 0 0 0" solref="0.004 1" solimp="0.99 0.999 0.001" />
+    <joint joint1="right_gripper_left_inner_knuckle_joint" joint2="right_gripper_left_finger_joint" polycoef="0 1 0 0 0" solref="0.004 1" solimp="0.99 0.999 0.001" />
+    <joint joint1="right_gripper_right_inner_knuckle_joint" joint2="right_gripper_left_finger_joint" polycoef="0 -1 0 0 0" solref="0.004 1" solimp="0.99 0.999 0.001" />
+
+    <!-- 【E方案】搬运【横移段】的等效力约束(= 理想夹持: 把工件刚接到左夹爪基座)。
+         为什么需要: 底盘是没有关节的静态体, 靠直接写 body_pos 移动 => 求解器里速度恒为 0;
+         而 MuJoCo 的摩擦是【速度级】约束, 没有相对运动趋势就【不出力】, 于是出现
+         "底盘走了、工件留在原地"(实测底盘 1.344m / 工件 0.075m = 6% 跟随)。等效力约束是
+         位置级的, 能直接传递这种位移(最小对照实验实测跟随率 99.7%, 见 src/belt_convey_test2.py)。
+         启用范围: 仅 Carry 的【横移子阶段】(carry_sub_==1)。抬起/下插/释放一律关闭 =>
+         那些阶段的摩擦、滑移仍由真实接触仿真, lift_gain / 滑移量等指标保持可信。
+         参考位姿: weld 的参考存在 eq_data 里, 编译期由 qpos0 算出。本项目 qpos0 时工件在
+         料框 A、夹爪在原点 => 编译期参考是错的(直接启用会把工件甩飞), 所以控制器会在启用
+         前用【当前实测相对位姿】改写 eq_data[3:10] => 启用瞬间零跳变。
+         实测字段语义: [0:3]=body1系锚点(留0), [3:6]=body2原点在body1系的位置,
+                       [6:10]=相对四元数(w,x,y,z; body2在body1), [10]=torquescale。
+         这里对两个工件各挂一条(默认 active=false, 不启用时占用 0 行约束), 控制器按
+         target_workpiece 选中的那条启用 => 换工件号时不用动 XML。 -->
+    <weld name="grasp_weld_05" body1="left_gripper_base" body2="workpiece_05"
+          active="false" solref="0.004 1" solimp="0.99 0.999 0.001" />
+    <weld name="grasp_weld_06" body1="left_gripper_base" body2="workpiece_06"
+          active="false" solref="0.004 1" solimp="0.99 0.999 0.001" />
+    <!-- 【E方案】工件【两爪都要接】。只接左爪时实测: 负载全走左爪 => 右爪垫片法向力
+         掉到接近 0, 而夹持力环仍在继续闭合 => 反力把右臂推离工件(正反馈) =>
+         工件从右手"走"出来脱落。理想夹持本来就该两爪都刚性连接(工件+两臂构成闭链)。 -->
+    <weld name="grasp_weld_05R" body1="right_gripper_base" body2="workpiece_05"
+          active="false" solref="0.004 1" solimp="0.99 0.999 0.001" />
+    <weld name="grasp_weld_06R" body1="right_gripper_base" body2="workpiece_06"
+          active="false" solref="0.004 1" solimp="0.99 0.999 0.001" />
+  </equality>
+  <sensor>
+    <force site="left_ft300_site" />
+    <torque site="left_ft300_site" />
+    <force site="right_ft300_site" />
+    <torque site="right_ft300_site" />
+  </sensor>
+  <visual>
+    <rgba haze="0.15 0.25 0.35 1" />
+  </visual>
+
+  <!-- ==================== 料框与长条工件 ====================
+       外部场景文件：mesh/material 定义 + container_A / workpiece / container_B 三个 body。
+       必须置于文件末尾：MuJoCo 按文档顺序生成 body 与 joint，
+       放在末尾可保证 floating_base 仍为 qpos[0:7]、容器不会挤到机器人之前。
+       注意：同一文件在一次编译中只能被 include 一次。 -->
+  <include file="../../../scene/scene_containers.xml" />
+
+</mujoco>

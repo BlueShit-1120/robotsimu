@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="spr_DVT1_description">
+
+    <xacro:include filename="./DVT1.urdf" />
+    <xacro:include filename="./arm_ee_links_DVT1.xacro" />
+    <xacro:include filename="../tools/box-gripper-v1/arm_box_clamp.xacro" />
+    <xacro:include filename="./sensors_perception_DVT1.xacro" />
+    <xacro:include filename="./sensors_navigation_DVT1.xacro" />
+
+</robot>

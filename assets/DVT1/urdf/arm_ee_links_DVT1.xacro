@@ -1,0 +1,51 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="arm_ee_links_DVT1">
+
+    <link name="left_arm_ee_link" />
+    <link name="right_arm_ee_link" />
+
+    <joint name="left_arm_ee_joint" type="fixed">
+        <parent link="left_arm_link7"/>
+        <child link="left_arm_ee_link"/>
+        <origin xyz="0.0 -0.095 0" rpy="1.57079633 -1.57079633 0"/>
+    </joint>
+
+    <joint name="right_arm_ee_joint" type="fixed">
+        <parent link="right_arm_link7"/>
+        <child link="right_arm_ee_link"/>
+        <origin xyz="0.0 -0.095 0" rpy="1.57079633 -1.57079633 0"/>
+    </joint>
+
+
+    <link name="left_arm_tcp_link" />
+    <link name="right_arm_tcp_link" />
+
+    <joint name="left_arm_tcp_joint" type="fixed">
+        <parent link="left_arm_ee_link"/>
+        <child link="left_arm_tcp_link"/>
+        <origin xyz="0.0 0.0 0" rpy="0 -0.0 3.1415"/>
+    </joint>
+
+    <joint name="right_arm_tcp_joint" type="fixed">
+        <parent link="right_arm_ee_link"/>
+        <child link="right_arm_tcp_link"/>
+        <origin xyz="0.0 0.0 0" rpy="0 -0.0 0"/>
+    </joint>
+
+
+    <link name="left_apriltag" />
+    <link name="right_apriltag" />
+
+    <joint name="right_apriltag_joint" type="fixed">
+        <parent link="right_arm_tcp_link"/>
+        <child link="right_apriltag"/>
+        <origin xyz="0.0 0 0.09" rpy="0 0 0"/>
+    </joint>
+
+    <joint name="left_apriltag_joint" type="fixed">
+        <parent link="left_arm_tcp_link"/>
+        <child link="left_apriltag"/>
+        <origin xyz="0.0 0 0.09" rpy="0 0 0"/>
+    </joint>
+
+</robot>

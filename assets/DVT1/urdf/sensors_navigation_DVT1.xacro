@@ -1,0 +1,94 @@
+<?xml version="1.0"?>
+<robot name="sensors_navigation_DVT1" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+    <link name="imu">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <cylinder radius="0.010" length="0.001" />
+            </geometry>
+            <material name="">
+                <color rgba="0.5 0.5 0.5 1" />
+            </material>
+        </visual>
+    </link>
+
+    <link name="laser_front">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <cylinder radius="0.010" length="0.001" />
+            </geometry>
+            <material name="">
+                <color rgba="0.5 0.5 0.5 1" />
+            </material>
+        </visual>
+    </link>
+
+    <link name="laser_back">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <cylinder radius="0.010" length="0.001" />
+            </geometry>
+            <material name="">
+                <color rgba="0.5 0.5 0.5 1" />
+            </material>
+        </visual>
+    </link>
+
+    <link name="laser_top">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <cylinder radius="0.010" length="0.001" />
+            </geometry>
+            <material name="">
+                <color rgba="0.5 0.5 0.5 1" />
+            </material>
+        </visual>
+    </link>
+
+    <link name="berxel_camera/berxel_base_link">
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0" />
+            <geometry>
+                <cylinder radius="0.010" length="0.001" />
+            </geometry>
+            <material name="">
+                <color rgba="0.5 0.5 0.5 1" />
+            </material>
+        </visual>
+    </link>
+
+    <joint name="base_link_to_imu" type="fixed">
+        <parent link="base_link" />
+        <child link="imu" />
+        <origin xyz="0 0 0.2463" rpy="0 0 0" />
+    </joint> 
+
+    <joint name="base_link_to_laser_front" type="fixed">
+        <parent link="base_link" />
+        <child link="laser_front" />
+        <origin xyz="0.22295 0.22116 0.35238" rpy="0 0 0.7854 " />
+    </joint>
+
+    <joint name="base_link_to_laser_back" type="fixed">
+        <parent link="base_link"/>
+        <child link="laser_back"/>
+        <origin xyz="-0.24756 -0.22068 0.37574" rpy="0 0 -2.3562"/>
+    </joint>
+
+    <joint name="base_link_to_laser_top" type="fixed">
+        <parent link="base_link"/>
+        <child link="laser_top"/>
+        <origin xyz="0.04697 0 1.41933" rpy="0 -0.2269 0"/>
+    </joint>
+
+    <joint name="base_link_to_camera_link_bot_front" type="fixed">
+        <parent link="base_link" />
+        <child link="berxel_camera/berxel_base_link" />
+        <origin xyz="0.37365 -0.010 0.21941" rpy="0 1.57079632679 0" />
+    </joint>
+
+</robot>

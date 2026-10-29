@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" >
+
+    <!-- spr_robot -->
+    <xacro:include filename="./DVT1/spr_robot_DVT1.urdf.xacro" />
+
+</robot>
