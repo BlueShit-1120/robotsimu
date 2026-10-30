@@ -1,4 +1,4 @@
-"""Gymnasium MuJoCo env: right-arm 7 + gripper 1 pick-place (M0/M1)."""
+"""Gymnasium MuJoCo env: right-arm 7 + gripper 1 (M0–M3 Reach/Grasp/Place)."""
 
 from __future__ import annotations
 
@@ -18,20 +18,29 @@ from robot_simu_rl.common.joints import (
     MJCF_RIGHT_GRIPPER_JOINT,
 )
 from robot_simu_rl.common.paths import PICK_PLACE_SCENE
-from robot_simu_rl.tasks.pick_place.rewards import ReachConfig, reach_reward, reach_target
 
-# Box spawn: table center-ish with light XY randomization (meters, world frame)
-# Box XY near right-arm home EE projection (M1 reachability)
+Phase = Literal["m0_smoke", "reach", "grasp", "place"]
+
+# M1 moved spawn nearer right-arm home EE; M0 default was (0.55, 0.0).
 _BOX_XY_CENTER = np.array([0.70, -0.20], dtype=np.float64)
-_BOX_XY_HALF_RANGE = np.array([0.05, 0.06], dtype=np.float64)  # ±
+_BOX_XY_HALF_RANGE = np.array([0.04, 0.04], dtype=np.float64)
 _BOX_Z = 0.765  # table top 0.75 + half height 0.015
-_PLACE_GOAL_XY = np.array([0.70, 0.05], dtype=np.float64)
+# Place goal: ~8 cm +Y of spawn (−0.20→−0.12). Short-train seed-hold starts
+# above this goal (see place_start_holding) so C3 focuses on lower+release
+# even with tightened place_tol_xy≈0.06–0.08; --full-pick does the carry.
+_PLACE_GOAL_XY = np.array([0.70, -0.12], dtype=np.float64)
 
-# Default right-arm home (reachable toward +X table). M1 hover is raised so
-# the pre-grasp target sits near this EE height (see ReachConfig.hover_offset_m).
+# Default right-arm home (reach toward +X table) — M0 smoke
 _RIGHT_ARM_HOME = np.array([0.0, -0.6, 0.0, -1.2, 0.0, -0.4, 0.0], dtype=np.float64)
-
-CurriculumPhase = Literal["reach", "pick_place"]
+# M1/M2 home nearer box spawn (0.70, -0.20): EE ~10–12 cm above/ beside workpiece
+_RIGHT_ARM_HOME_NEAR = np.array(
+    [-0.4923, -1.1724, -0.1493, -0.8018, -0.2582, -0.2665, 0.0375], dtype=np.float64
+)
+# M4 contact-grasp home: at grip≈0.55 tip mid stays on box (close without diving).
+_RIGHT_ARM_HOME_GRASP = np.array(
+    [-0.38357, -1.04487, -0.0086, -0.75563, 0.04278, -0.37762, 0.98704],
+    dtype=np.float64,
+)
 
 
 class PickPlaceMujocoEnv(gym.Env):
@@ -41,9 +50,12 @@ class PickPlaceMujocoEnv(gym.Env):
                 (mapped to knuckle angle [0, 0.8]).
     Obs: arm q/qd (14) + grip (1) + ee pos(3)/quat(4) + box pos(3)/quat(4) + goal xy(2).
 
-    Curriculum:
-      - ``phase="reach"`` (M1/C0): reward EE→hover above box; optional open-gripper hold.
-      - ``phase="pick_place"``: legacy M0 distance-to-box shaping.
+    Phases
+    ------
+    m0_smoke : legacy distance-to-box reward
+    reach    : hover target above box; gripper held open (M1 / C0)
+    grasp    : approach, close, lift; place reward off (M2 / C1)
+    place    : grasp → carry → release at goal (M3 / C2–C3)
     """
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
@@ -57,10 +69,21 @@ class PickPlaceMujocoEnv(gym.Env):
         delta_q_scale: float = 0.05,
         render_mode: Optional[str] = None,
         randomize_box: bool = True,
-        phase: CurriculumPhase = "pick_place",
+        phase: Phase = "m0_smoke",
+        hover_offset: float = 0.30,
+        success_dist: float = 0.05,
+        lift_height: float = 0.05,
         hold_gripper_open: Optional[bool] = None,
-        reach_cfg: Optional[ReachConfig] = None,
-        terminate_on_reach_success: bool = True,
+        early_terminate_success: bool = True,
+        # M2/M3 short-train assist: kinematic latch when closed near object
+        # (proxy-finger contacts are optimistic/brittle; see docs/m2-grasp.md).
+        grasp_latch: Optional[bool] = None,
+        latch_dist: float = 0.12,
+        place_tol_xy: float = 0.12,
+        place_tol_z: float = 0.04,
+        place_stable_steps: int = 3,
+        # M3 short-train: start already holding (C2/C3 focus; grasp is M2)
+        place_start_holding: Optional[bool] = None,
     ) -> None:
         super().__init__()
         self.model_path = Path(model_path) if model_path else PICK_PLACE_SCENE
@@ -75,18 +98,37 @@ class PickPlaceMujocoEnv(gym.Env):
         self.delta_q_scale = float(delta_q_scale)
         self.render_mode = render_mode
         self.randomize_box = bool(randomize_box)
-        self.phase: CurriculumPhase = phase
-        self.reach_cfg = reach_cfg or ReachConfig()
-        # M1 default: hold gripper open so policy focuses on arm reach
+        self.phase: Phase = phase
+        self.hover_offset = float(hover_offset)
+        self.success_dist = float(success_dist)
+        self.lift_height = float(lift_height)
         if hold_gripper_open is None:
             hold_gripper_open = phase == "reach"
         self.hold_gripper_open = bool(hold_gripper_open)
-        self.terminate_on_reach_success = bool(terminate_on_reach_success)
+        self.early_terminate_success = bool(early_terminate_success)
+        if grasp_latch is None:
+            grasp_latch = phase in ("grasp", "place")
+        self.grasp_latch = bool(grasp_latch)
+        self.latch_dist = float(latch_dist)
+        self.place_tol_xy = float(place_tol_xy)
+        self.place_tol_z = float(place_tol_z)
+        self.place_stable_steps = int(place_stable_steps)
+        if place_start_holding is None:
+            place_start_holding = phase == "place"
+        self.place_start_holding = bool(place_start_holding)
         self._step_count = 0
-        self._reach_success_streak = 0
-        self._last_reach_dist = 0.0
         self._viewer = None
         self._renderer: Optional[mujoco.Renderer] = None
+        self._prev_dist = 0.0
+        self._prev_place_dist = 0.0
+        self._box_z0 = _BOX_Z
+        self._reached_once = False
+        self._lifted_once = False
+        self._carried_once = False
+        self._placed_once = False
+        self._place_ok_steps = 0
+        self._latched = False
+        self._latch_offset = np.zeros(3, dtype=np.float64)
 
         self._arm_jnt_ids = [self._joint_id(n) for n in MJCF_RIGHT_ARM_JOINTS]
         self._grip_jnt_id = self._joint_id(MJCF_RIGHT_GRIPPER_JOINT)
@@ -96,11 +138,36 @@ class PickPlaceMujocoEnv(gym.Env):
 
         self._act_arm_ids = [self._actuator_id(n) for n in MJCF_RIGHT_ARM_JOINTS]
         self._act_grip_id = self._actuator_id("right_gripper")
+        # Detect position vs motor actuators (M1 switched right arm to position)
+        self._arm_is_position = True
+        for aid in self._act_arm_ids:
+            # mjTRN_JOINT + gaintype fixed → position actuator typically
+            # Safer: check actuator_biastype / dynprm — use XML name convention via gaintype
+            # MuJoCo position actuators have gaintype = mjGAIN_FIXED and biastype = mjBIAS_AFFINE
+            bias = int(self.model.actuator_biastype[aid])
+            if bias == 0:  # mjBIAS_NONE → motor
+                self._arm_is_position = False
+                break
 
         self._ee_body_id = self._body_id("right_arm_ee_link")
         self._box_body_id = self._body_id("workpiece")
         self._box_jnt_id = self._joint_id("workpiece_free")
         self._box_qadr = int(self.model.jnt_qposadr[self._box_jnt_id])
+        self._tip_l_body = self._body_id("right_gripper_left_fingertip")
+        self._tip_r_body = self._body_id("right_gripper_right_fingertip")
+        self._tip_l_geom = int(
+            mujoco.mj_name2id(
+                self.model, mujoco.mjtObj.mjOBJ_GEOM, "right_gripper_left_fingertip_collision"
+            )
+        )
+        self._tip_r_geom = int(
+            mujoco.mj_name2id(
+                self.model, mujoco.mjtObj.mjOBJ_GEOM, "right_gripper_right_fingertip_collision"
+            )
+        )
+        self._box_geom = int(
+            mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_GEOM, "workpiece_geom")
+        )
 
         self._locked: list[tuple[int, float, int]] = []
         for name, q in LOCKED_QPOS.items():
@@ -115,20 +182,19 @@ class PickPlaceMujocoEnv(gym.Env):
         self._arm_high = np.array([hi for _, hi in ARM_JOINT_LIMITS], dtype=np.float64)
         self._grip_low, self._grip_high = GRIPPER_JOINT_LIMIT
 
-        # Action: Δq_norm in [-1,1]^7 + grip cmd in [0,1]
         self.action_space = spaces.Box(
             low=np.array([-1.0] * 7 + [0.0], dtype=np.float32),
             high=np.array([1.0] * 7 + [1.0], dtype=np.float32),
             dtype=np.float32,
         )
-        # Obs dim: 14 + 1 + 3+4 + 3+4 + 2 + reach_rel(3) = 34
         self.observation_space = spaces.Box(
-            low=-np.inf, high=np.inf, shape=(34,), dtype=np.float32
+            low=-np.inf, high=np.inf, shape=(31,), dtype=np.float32
         )
 
         self._place_goal = np.array(
             [_PLACE_GOAL_XY[0], _PLACE_GOAL_XY[1], _BOX_Z], dtype=np.float64
         )
+        self._reach_target = np.zeros(3, dtype=np.float64)
 
     # ---- id helpers ----
     def _joint_id(self, name: str) -> int:
@@ -149,6 +215,36 @@ class PickPlaceMujocoEnv(gym.Env):
             raise KeyError(f"body not found: {name}")
         return int(bid)
 
+    def _update_reach_target(self) -> None:
+        box = self.data.xpos[self._box_body_id]
+        if self.phase == "place":
+            if self._latched:
+                # Carry: hover above place goal
+                self._reach_target[:] = [
+                    self._place_goal[0],
+                    self._place_goal[1],
+                    self._box_z0 + max(self.lift_height, 0.05),
+                ]
+            else:
+                offset = min(self.hover_offset, 0.08)
+                self._reach_target[:] = [box[0], box[1], box[2] + offset]
+        elif self.phase == "grasp":
+            # M4: steer fingertip midpoint to box center (proxy pads pinch at box height).
+            tip_mid = 0.5 * (
+                self.data.xpos[self._tip_l_body] + self.data.xpos[self._tip_r_body]
+            )
+            # Target for tip mid == box; convert to an EE-space target by the
+            # current tip_mid→EE offset so Δq still moves the pads onto the box.
+            ee = self.data.xpos[self._ee_body_id]
+            offset = ee - tip_mid
+            self._reach_target[:] = [
+                box[0] + offset[0],
+                box[1] + offset[1],
+                box[2] + offset[2],
+            ]
+        else:
+            self._reach_target[:] = [box[0], box[1], box[2] + self.hover_offset]
+
     # ---- core API ----
     def reset(
         self, *, seed: Optional[int] = None, options: Optional[dict] = None
@@ -156,51 +252,98 @@ class PickPlaceMujocoEnv(gym.Env):
         super().reset(seed=seed)
         mujoco.mj_resetData(self.model, self.data)
         self._step_count = 0
+        self._reached_once = False
+        self._lifted_once = False
+        self._carried_once = False
+        self._placed_once = False
+        self._place_ok_steps = 0
+        self._latched = False
+        self._latch_offset[:] = 0.0
+        self._prev_place_dist = 0.0
 
-        # Lock frozen DOFs
         for qadr, q, dadr in self._locked:
             self.data.qpos[qadr] = q
             self.data.qvel[dadr] = 0.0
 
-        self._reach_success_streak = 0
-
-        # Right arm home + open gripper
+        if self.phase == "grasp":
+            home = _RIGHT_ARM_HOME_GRASP
+        elif self.phase in ("reach", "place"):
+            home = _RIGHT_ARM_HOME_NEAR
+        else:
+            home = _RIGHT_ARM_HOME
         for i, adr in enumerate(self._arm_qadr):
             self.data.qpos[adr] = float(
-                np.clip(_RIGHT_ARM_HOME[i], self._arm_low[i], self._arm_high[i])
+                np.clip(home[i], self._arm_low[i], self._arm_high[i])
             )
             self.data.qvel[self._arm_vadr[i]] = 0.0
         self.data.qpos[self._grip_qadr] = 0.0
 
-        # Box spawn
         xy = _BOX_XY_CENTER.copy()
-        if self.randomize_box:
+        if self.randomize_box and self.phase == "m0_smoke":
             offset = self.np_random.uniform(-1.0, 1.0, size=2) * _BOX_XY_HALF_RANGE
+            xy = _BOX_XY_CENTER + offset
+        elif self.randomize_box and self.phase in ("reach", "grasp", "place"):
+            # Light jitter for curriculum; default train uses fixed box
+            offset = self.np_random.uniform(-1.0, 1.0, size=2) * (
+                _BOX_XY_HALF_RANGE * 0.5
+            )
             xy = _BOX_XY_CENTER + offset
         self.data.qpos[self._box_qadr : self._box_qadr + 3] = [xy[0], xy[1], _BOX_Z]
         self.data.qpos[self._box_qadr + 3 : self._box_qadr + 7] = [1, 0, 0, 0]
         box_dof = int(self.model.jnt_dofadr[self._box_jnt_id])
         self.data.qvel[box_dof : box_dof + 6] = 0.0
+        self._box_z0 = float(_BOX_Z)
+        self._prev_place_dist = float(
+            np.linalg.norm(
+                np.array([xy[0], xy[1]], dtype=np.float64) - self._place_goal[:2]
+            )
+        )
 
-        # Clear non-right ctrl; arm position targets = home; grip open
         self.data.ctrl[:] = 0.0
         for i, aid in enumerate(self._act_arm_ids):
-            self.data.ctrl[aid] = float(
-                np.clip(_RIGHT_ARM_HOME[i], self._arm_low[i], self._arm_high[i])
-            )
+            if self._arm_is_position:
+                self.data.ctrl[aid] = float(self.data.qpos[self._arm_qadr[i]])
+            else:
+                self.data.ctrl[aid] = 0.0
         self.data.ctrl[self._act_grip_id] = 0.0
 
         mujoco.mj_forward(self.model, self.data)
-        # Seed potential for progress shaping
-        self._last_reach_dist = float(
-            np.linalg.norm(self.data.xpos[self._ee_body_id] - self._reach_target())
+
+        # M3/M3b short-train: begin already holding with a small lift (C2→C3).
+        # If spawn→goal already fits inside place_tol_xy (M3 default), seed at
+        # spawn. If tol is tighter than that distance (M3b), seed above the
+        # place goal so C3 still starts in-zone; --full-pick does the carry.
+        if self.phase == "place" and self.place_start_holding:
+            ee = self.data.xpos[self._ee_body_id].copy()
+            spawn_to_goal = float(np.linalg.norm(xy - self._place_goal[:2]))
+            if spawn_to_goal >= self.place_tol_xy:
+                hold_xy = self._place_goal[:2].copy()
+            else:
+                hold_xy = xy.copy()
+            self._latched = True
+            self._latch_offset = np.array(
+                [
+                    hold_xy[0] - ee[0],
+                    hold_xy[1] - ee[1],
+                    (_BOX_Z + self.lift_height) - ee[2],
+                ],
+                dtype=np.float64,
+            )
+            self.data.qpos[self._grip_qadr] = 0.55
+            self.data.ctrl[self._act_grip_id] = 0.55
+            self._apply_latch()
+            mujoco.mj_forward(self.model, self.data)
+            self._lifted_once = True
+            self._reached_once = True
+            self._prev_place_dist = self._place_dist_xy()
+
+        self._update_reach_target()
+        self._prev_dist = float(
+            np.linalg.norm(self.data.xpos[self._ee_body_id] - self._reach_target)
         )
+        self._prev_place_dist = self._place_dist_xy()
         obs = self._get_obs()
         info = self._info()
-        info["reach_success"] = False
-        info["grasp_success"] = False
-        info["place_success"] = False
-        info["phase"] = self.phase
         return obs, info
 
     def step(
@@ -208,51 +351,117 @@ class PickPlaceMujocoEnv(gym.Env):
     ) -> Tuple[np.ndarray, SupportsFloat, bool, bool, dict[str, Any]]:
         action = np.asarray(action, dtype=np.float64).reshape(8)
         action = np.clip(action, self.action_space.low, self.action_space.high)
-        if self.hold_gripper_open:
-            action = action.copy()
-            action[7] = 0.0
 
-        # Desired arm targets via incremental position (MJCF position actuators)
         q = np.array([self.data.qpos[a] for a in self._arm_qadr], dtype=np.float64)
         qd = q + action[:7] * self.delta_q_scale
         qd = np.clip(qd, self._arm_low, self._arm_high)
-        grip_cmd = float(action[7])  # 0 open .. 1 closed
+        if self.hold_gripper_open:
+            grip_cmd = 0.0
+        else:
+            grip_cmd = float(action[7])
         grip_target = self._grip_low + grip_cmd * (self._grip_high - self._grip_low)
 
         for _ in range(self.frame_skip):
             self._apply_locks()
-            for aid, target in zip(self._act_arm_ids, qd):
-                self.data.ctrl[aid] = float(target)
+            if self._arm_is_position:
+                for aid, target in zip(self._act_arm_ids, qd):
+                    self.data.ctrl[aid] = float(target)
+            else:
+                q_now = np.array(
+                    [self.data.qpos[a] for a in self._arm_qadr], dtype=np.float64
+                )
+                dq = np.array(
+                    [self.data.qvel[a] for a in self._arm_vadr], dtype=np.float64
+                )
+                kp = np.array([80, 80, 60, 60, 20, 20, 20], dtype=np.float64)
+                kd = np.array([4, 4, 3, 3, 1, 1, 1], dtype=np.float64)
+                from robot_simu_rl.common.joints import ARM_EFFORT
+
+                tau = kp * (qd - q_now) - kd * dq
+                tau = np.clip(tau, -np.asarray(ARM_EFFORT), np.asarray(ARM_EFFORT))
+                for aid, t in zip(self._act_arm_ids, tau):
+                    self.data.ctrl[aid] = float(t)
             self.data.ctrl[self._act_grip_id] = grip_target
-            # Zero other actuators (frozen DOFs held via qpos locks)
             for i in range(self.model.nu):
                 if i not in self._act_arm_ids and i != self._act_grip_id:
                     self.data.ctrl[i] = 0.0
             mujoco.mj_step(self.model, self.data)
+            self._sync_hold(grip_cmd)
 
         self._apply_locks()
+        if self._sync_hold(grip_cmd):
+            mujoco.mj_forward(self.model, self.data)
         self._step_count += 1
+        self._update_reach_target()
         obs = self._get_obs()
-        reward, reach_ok = self._compute_reward(action)
-        dropped = bool(self._dropped())
-        terminated = dropped
-        if (
-            self.phase == "reach"
-            and self.terminate_on_reach_success
-            and reach_ok
-        ):
-            self._reach_success_streak += 1
-            if self._reach_success_streak >= self.reach_cfg.success_hold_steps:
-                terminated = True
-        else:
-            self._reach_success_streak = 0
+        reward = self._reward(grip_cmd)
+        success = self._phase_success()
+        terminated = bool(self._dropped())
+        if self.early_terminate_success and success:
+            terminated = True
         truncated = self._step_count >= self.max_episode_steps
         info = self._info()
         info["grasp_success"] = self._grasp_success()
-        info["place_success"] = False  # curriculum later (M3)
-        info["reach_success"] = bool(reach_ok)
+        info["place_success"] = self._place_success()
+        info["reach_success"] = self._reach_success()
+        info["reach_dist"] = float(
+            np.linalg.norm(self.data.xpos[self._ee_body_id] - self._reach_target)
+        )
+        info["reach_target"] = self._reach_target.copy()
+        info["place_dist_xy"] = self._place_dist_xy()
+        info["latched"] = bool(self._latched)
         info["phase"] = self.phase
+        info["success"] = bool(success)
         return obs, float(reward), terminated, truncated, info
+
+    def _sync_hold(self, grip_cmd: float) -> bool:
+        """Update kinematic hold. Returns True if a hold was applied this call.
+
+        - grasp_latch=True: acquire near object when closed; release when open.
+        - grasp_latch=False: never re-acquire; only release a seed hold from
+          place_start_holding (C3 curriculum without latch assist).
+        """
+        if self.grasp_latch:
+            self._update_latch(grip_cmd)
+            if self._latched:
+                self._apply_latch()
+                return True
+            return False
+        if self._latched:
+            # Seed-hold only: clear on open, keep applying until then.
+            grip = float(self.data.qpos[self._grip_qadr])
+            if grip_cmd < 0.2 or grip < 0.12:
+                self._latched = False
+                return False
+            self._apply_latch()
+            return True
+        return False
+
+    def _update_latch(self, grip_cmd: float) -> None:
+        ee = self.data.xpos[self._ee_body_id]
+        box = self.data.xpos[self._box_body_id]
+        dist = float(np.linalg.norm(ee - box))
+        grip = float(self.data.qpos[self._grip_qadr])
+        if not self._latched:
+            if dist < self.latch_dist and grip_cmd > 0.45 and grip > 0.20:
+                self._latched = True
+                self._latch_offset = box - ee
+        else:
+            if grip_cmd < 0.2 or grip < 0.12:
+                self._latched = False
+
+    def _apply_latch(self) -> None:
+        if not self._latched:
+            return
+        ee = self.data.xpos[self._ee_body_id]
+        pos = ee + self._latch_offset
+        # Keep a minimum height so latch doesn't shove through table
+        pos[2] = max(pos[2], self._box_z0)
+        self.data.qpos[self._box_qadr : self._box_qadr + 3] = pos
+        # Preserve upright quaternion
+        self.data.qpos[self._box_qadr + 3 : self._box_qadr + 7] = [1, 0, 0, 0]
+        box_dof = int(self.model.jnt_dofadr[self._box_jnt_id])
+        self.data.qvel[box_dof : box_dof + 6] = 0.0
 
     def _apply_locks(self) -> None:
         for qadr, q, dadr in self._locked:
@@ -262,11 +471,10 @@ class PickPlaceMujocoEnv(gym.Env):
     def _get_obs(self) -> np.ndarray:
         q = np.array([self.data.qpos[a] for a in self._arm_qadr], dtype=np.float64)
         dq = np.array([self.data.qvel[a] for a in self._arm_vadr], dtype=np.float64)
-        # normalize arm to [-1,1]
         mid = 0.5 * (self._arm_low + self._arm_high)
         half = 0.5 * (self._arm_high - self._arm_low)
         qn = (q - mid) / np.maximum(half, 1e-6)
-        dqn = dq / np.pi  # rough
+        dqn = dq / np.pi
         grip = np.array(
             [
                 (self.data.qpos[self._grip_qadr] - self._grip_low)
@@ -279,56 +487,243 @@ class PickPlaceMujocoEnv(gym.Env):
         box_pos = self.data.xpos[self._box_body_id].copy()
         box_quat = self.data.xquat[self._box_body_id].copy()
         goal_xy = self._place_goal[:2].copy()
-        reach_rel = self._reach_target() - ee_pos
-        obs = np.concatenate(
-            [qn, dqn, grip, ee_pos, ee_quat, box_pos, box_quat, goal_xy, reach_rel]
-        )
+        obs = np.concatenate([qn, dqn, grip, ee_pos, ee_quat, box_pos, box_quat, goal_xy])
         return obs.astype(np.float32)
 
-    def _reach_target(self) -> np.ndarray:
-        box = self.data.xpos[self._box_body_id]
-        return reach_target(box, self.reach_cfg.hover_offset_m)
-
-    def _compute_reward(self, action: np.ndarray) -> tuple[float, bool]:
-        ee = self.data.xpos[self._ee_body_id]
+    def _reward(self, grip_cmd: float) -> float:
         if self.phase == "reach":
-            target = self._reach_target()
-            prev = self._last_reach_dist
-            r, dist, success = reach_reward(
-                ee,
-                target,
-                action=action,
-                cfg=self.reach_cfg,
-                prev_dist=prev if self._step_count > 1 else None,
-            )
-            self._last_reach_dist = dist
-            return r, success
+            return self._reward_reach()
+        if self.phase == "grasp":
+            return self._reward_grasp(grip_cmd)
+        if self.phase == "place":
+            return self._reward_place(grip_cmd)
+        # m0_smoke
+        ee = self.data.xpos[self._ee_body_id]
         box = self.data.xpos[self._box_body_id]
-        dist = float(np.linalg.norm(ee - box))
-        self._last_reach_dist = dist
-        return -dist, False
+        return -float(np.linalg.norm(ee - box))
 
-    def _reward(self) -> float:
-        """Backward-compatible single-value reward (no action penalty)."""
-        r, _ = self._compute_reward(np.zeros(8, dtype=np.float64))
+    def _reward_reach(self) -> float:
+        ee = self.data.xpos[self._ee_body_id]
+        dist = float(np.linalg.norm(ee - self._reach_target))
+        progress = self._prev_dist - dist
+        self._prev_dist = dist
+        r = -dist + 2.0 * progress
+        if dist < self.success_dist:
+            r += 5.0
+            if not self._reached_once:
+                r += 10.0
+                self._reached_once = True
+        return r
+
+    def _tip_mid(self) -> np.ndarray:
+        return 0.5 * (
+            self.data.xpos[self._tip_l_body] + self.data.xpos[self._tip_r_body]
+        )
+
+    def _finger_box_contacts(self) -> tuple[bool, bool]:
+        """Whether left/right fingertip pads currently touch the workpiece."""
+        left = right = False
+        for i in range(self.data.ncon):
+            c = self.data.contact[i]
+            g1, g2 = int(c.geom1), int(c.geom2)
+            hit_box = self._box_geom in (g1, g2)
+            if not hit_box:
+                continue
+            other = g2 if g1 == self._box_geom else g1
+            if other == self._tip_l_geom:
+                left = True
+            elif other == self._tip_r_geom:
+                right = True
+        return left, right
+
+    def _reward_grasp(self, grip_cmd: float) -> float:
+        ee = self.data.xpos[self._ee_body_id]
+        box = self.data.xpos[self._box_body_id]
+        tip_mid = self._tip_mid()
+        # Drive pads to box (M4) rather than raw EE hover.
+        dist = float(np.linalg.norm(tip_mid - box))
+        dist_box = float(np.linalg.norm(ee - box))
+        progress = self._prev_dist - dist
+        self._prev_dist = dist
+
+        r = -0.8 * dist + 1.2 * progress
+        r -= 0.05  # step cost
+        # Keep EE from flying away from the box (stabilizes no-latch PPO).
+        r -= 0.15 * max(0.0, dist_box - 0.25)
+
+        grip = float(self.data.qpos[self._grip_qadr])
+        near = dist < 0.08
+        left_hit, right_hit = self._finger_box_contacts()
+        pinch = left_hit and right_hit
+        holding = self._is_holding(grip_cmd)
+        if near and not holding:
+            # Incentive to close when pads near box
+            r += 2.5 * grip_cmd
+            if left_hit or right_hit:
+                r += 4.0
+            if pinch:
+                r += 12.0
+        elif not near:
+            r -= 0.5 * grip_cmd
+
+        lift = float(box[2] - self._box_z0)
+        if holding:
+            if not self._reached_once:
+                r += 15.0  # first acquire only
+                self._reached_once = True
+            # Dense lift shaping while holding (latch or contact)
+            r += 60.0 * max(0.0, min(lift, self.lift_height + 0.06))
+            # Encourage raising EE while holding
+            r += 8.0 * max(0.0, float(ee[2] - (self._box_z0 + 0.05)))
+            r += 5.0 * grip_cmd
+
+        if self._grasp_success():
+            r += 100.0
+            if not self._lifted_once:
+                r += 150.0
+                self._lifted_once = True
+        return r
+
+    def _is_holding(self, grip_cmd: float | None = None) -> bool:
+        """True if latch/seed-hold active, or contact-style pinch (no-latch)."""
+        if self._latched:
+            return True
+        if self.grasp_latch:
+            return False
+        grip = float(self.data.qpos[self._grip_qadr])
+        cmd_ok = True if grip_cmd is None else grip_cmd > 0.35
+        left_hit, right_hit = self._finger_box_contacts()
+        if left_hit and right_hit and grip > 0.25 and cmd_ok:
+            return True
+        # Fallback: tip mid near box + closed (contacts can flicker a step)
+        tip_mid = self._tip_mid()
+        box = self.data.xpos[self._box_body_id]
+        close = float(np.linalg.norm(tip_mid - box)) < 0.05
+        return bool(close and grip > 0.35 and cmd_ok)
+
+    def _place_dist_xy(self) -> float:
+        box = self.data.xpos[self._box_body_id]
+        return float(np.linalg.norm(box[:2] - self._place_goal[:2]))
+
+    def _reward_place(self, grip_cmd: float) -> float:
+        """C2 carry + C3 place: grasp/lift → move to goal → release & settle."""
+        ee = self.data.xpos[self._ee_body_id]
+        box = self.data.xpos[self._box_body_id]
+        dist_box = float(np.linalg.norm(ee - box))
+        place_xy = self._place_dist_xy()
+        place_progress = self._prev_place_dist - place_xy
+        self._prev_place_dist = place_xy
+
+        r = -0.05  # step cost
+
+        holding = self._is_holding(grip_cmd)
+
+        # Short-train release curriculum: already in/near goal XY at reset
+        release_only = (
+            self.place_start_holding and place_xy <= self.place_tol_xy * 1.25
+        ) or (holding and place_xy <= self.place_tol_xy)
+
+        if release_only or (holding and place_xy <= self.place_tol_xy * 1.25):
+            if holding or self._latched:
+                open_frac = 1.0 - grip_cmd
+                r += 25.0 * open_frac
+                r -= 20.0 * grip_cmd
+            else:
+                # After release: only reward being in-zone (no open-farming)
+                if place_xy <= self.place_tol_xy and abs(
+                    float(box[2]) - self._box_z0
+                ) < self.place_tol_z:
+                    r += 5.0
+                else:
+                    r -= 5.0
+            if place_xy > self.place_tol_xy:
+                r -= 25.0 * (place_xy - self.place_tol_xy)
+            if self._place_success():
+                r += 200.0
+                if not self._placed_once:
+                    r += 300.0
+                    self._placed_once = True
+            return r
+
+        # --- Stage A: acquire (full-pick mode) ---
+        if not holding:
+            target = self._reach_target
+            dist = float(np.linalg.norm(ee - target))
+            progress = self._prev_dist - dist
+            self._prev_dist = dist
+            r += -0.3 * dist + 0.5 * progress
+            near = dist_box < self.latch_dist
+            if near:
+                r += 1.5 * grip_cmd
+            else:
+                r -= 0.3 * grip_cmd
+        else:
+            # --- Stage B: carry while holding ---
+            lift = float(box[2] - self._box_z0)
+            if not self._lifted_once and lift > self.lift_height:
+                r += 40.0
+                self._lifted_once = True
+            r += -2.0 * place_xy + 5.0 * place_progress
+            r += 3.0 * max(0.0, min(lift, 0.06))
+            r += 0.5 * grip_cmd
+            if place_xy < self.place_tol_xy * 2.0 and not self._carried_once:
+                r += 25.0
+                self._carried_once = True
+
+        if self._place_success():
+            r += 200.0
+            if not self._placed_once:
+                r += 300.0
+                self._placed_once = True
         return r
 
     def _dropped(self) -> bool:
         z = float(self.data.xpos[self._box_body_id][2])
         return z < 0.3
 
-    def _grasp_success(self) -> bool:
-        box_z = float(self.data.xpos[self._box_body_id][2])
-        grip = float(self.data.qpos[self._grip_qadr])
+    def _reach_success(self) -> bool:
         ee = self.data.xpos[self._ee_body_id]
+        dist = float(np.linalg.norm(ee - self._reach_target))
+        return bool(dist < self.success_dist)
+
+    def _grasp_success(self) -> bool:
         box = self.data.xpos[self._box_body_id]
-        close = float(np.linalg.norm(ee - box)) < 0.08
-        return bool(close and grip > 0.35 and box_z > _BOX_Z + 0.03)
+        tip_mid = self._tip_mid()
+        grip = float(self.data.qpos[self._grip_qadr])
+        close = float(np.linalg.norm(tip_mid - box)) < 0.08
+        lifted = float(box[2]) > self._box_z0 + self.lift_height
+        if self.grasp_latch:
+            return bool(self._latched and lifted and grip > 0.25)
+        left_hit, right_hit = self._finger_box_contacts()
+        pinched = left_hit or right_hit or close
+        return bool(pinched and grip > 0.30 and lifted)
+
+    def _place_success(self) -> bool:
+        """Released near goal on table (C3). Tracks consecutive OK steps."""
+        box = self.data.xpos[self._box_body_id]
+        xy_ok = self._place_dist_xy() < self.place_tol_xy
+        z_ok = abs(float(box[2]) - self._box_z0) < self.place_tol_z
+        # Seed/latch hold must be cleared; contact hold ends when grip opens.
+        released = not self._latched
+        grip = float(self.data.qpos[self._grip_qadr])
+        openish = grip < 0.35
+        ok = bool(xy_ok and z_ok and released and openish)
+        if ok:
+            self._place_ok_steps += 1
+        else:
+            self._place_ok_steps = 0
+        return bool(self._place_ok_steps >= self.place_stable_steps)
+
+    def _phase_success(self) -> bool:
+        if self.phase == "reach":
+            return self._reach_success()
+        if self.phase == "grasp":
+            return self._grasp_success()
+        if self.phase == "place":
+            return self._place_success()
+        return False
 
     def _info(self) -> dict[str, Any]:
-        target = self._reach_target()
-        ee = self.data.xpos[self._ee_body_id]
-        dist = float(np.linalg.norm(ee - target))
         return {
             "ee_pose": np.concatenate(
                 [self.data.xpos[self._ee_body_id], self.data.xquat[self._ee_body_id]]
@@ -336,8 +731,6 @@ class PickPlaceMujocoEnv(gym.Env):
             "object_pose": np.concatenate(
                 [self.data.xpos[self._box_body_id], self.data.xquat[self._box_body_id]]
             ).copy(),
-            "reach_target": target.copy(),
-            "reach_dist": dist,
             "place_goal": self._place_goal.copy(),
             "steps": self._step_count,
         }

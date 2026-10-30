@@ -3,6 +3,9 @@
 
 Replaces missing Robotiq/FT meshes with box/cylinder proxies, freezes floating
 base, drops external scene include / grasp welds.
+
+M4 contact-grasp: right fingertip pads become sticky spheres (contype=2), other
+right-gripper collisions disabled, noslip/elliptic friction strengthened.
 """
 
 from __future__ import annotations
@@ -43,6 +46,19 @@ def replace_geom(match: re.Match) -> str:
     mass_m = re.search(r'mass="([^"]+)"', full)
     name = name_m.group(1) if name_m else "proxy"
     cls = class_m.group(1) if class_m else "visual"
+    # M4: right fingertip pads → sticky spheres that skip table contacts.
+    if "right_gripper" in name and "fingertip" in name:
+        if cls == "visual":
+            return (
+                f'<geom name="{name}" type="sphere" size="0.016" class="visual" '
+                f'rgba="0.15 0.15 0.18 1" />'
+            )
+        mass = mass_m.group(1) if mass_m else "0.0427"
+        return (
+            f'<geom name="{name}" type="sphere" size="0.018" class="collision" '
+            f'friction="3.5 0.3 0.01" solref="0.045 1" solimp="0.9 0.95 0.001" '
+            f'condim="6" contype="2" conaffinity="0" mass="{mass}" />'
+        )
     parts = [f'<geom name="{name}" type="{gtype}" size="{size}" class="{cls}"']
     if rgba and cls == "visual":
         parts.append(f' rgba="{rgba}"')
@@ -51,6 +67,13 @@ def replace_geom(match: re.Match) -> str:
     if mass_m:
         parts.append(f' mass="{mass_m.group(1)}"')
     if "inner_knuckle" in name and cls == "collision":
+        parts.append(' contype="0" conaffinity="0"')
+    # M4: disable non-pad right gripper collisions (knuckles shove the box).
+    if (
+        cls == "collision"
+        and name.startswith("right_gripper")
+        and "fingertip" not in name
+    ):
         parts.append(' contype="0" conaffinity="0"')
     parts.append(" />")
     return "".join(parts)
@@ -72,10 +95,31 @@ def main() -> int:
         r'[ \t]*<include\s+file="[^"]*scene_containers\.xml"\s*/>\s*\n?', "", text
     )
     text = re.sub(r'[ \t]*<weld\s+name="grasp_weld_[^"]+"[^/]*/>\s*\n?', "", text)
-    text = text.replace('noslip_iterations="20"', 'noslip_iterations="2"')
+    text = text.replace(
+        'noslip_iterations="20"',
+        'noslip_iterations="20" impratio="20" cone="elliptic"',
+    )
+    if "noslip_iterations" not in text:
+        text = text.replace(
+            "<compiler",
+            '<option noslip_iterations="20" noslip_tolerance="1e-8" '
+            'impratio="20" cone="elliptic" />\n  <compiler',
+            1,
+        )
     text = re.sub(r'<geom\b[^>]*\bmesh="([^"]+)"[^/]*/>', replace_geom, text)
     text = text.replace('<mujoco model="spr_robot">', '<mujoco model="spr_robot_m0_proxy">')
     text = text.replace('meshdir="../meshes"', 'meshdir="../DVT1/meshes"')
+    text = text.replace(
+        '<position name="right_gripper" joint="right_gripper_left_finger_joint" kp="50" />',
+        '<position name="right_gripper" joint="right_gripper_left_finger_joint" '
+        'kp="70" ctrlrange="0 0.8" ctrllimited="true" '
+        'forcerange="-80 80" forcelimited="true" />',
+    )
+    text = text.replace(
+        '<position name="left_gripper" joint="left_gripper_left_finger_joint" kp="50" />',
+        '<position name="left_gripper" joint="left_gripper_left_finger_joint" '
+        'kp="50" ctrlrange="0 0.8" ctrllimited="true" />',
+    )
     text = re.sub(r"\n{3,}", "\n\n", text)
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(text, encoding="utf-8")

@@ -1,7 +1,9 @@
-# rs-mujoco pip pins (MuJoCo 3 + Gymnasium + SB3). Prefer: conda env create -f environment-mujoco.yml
+# rs-mujoco pip pins (MuJoCo 3 + Gymnasium). Prefer: conda env create -f environment-mujoco.yml
 mujoco>=3.1,<4
 gymnasium>=0.29
 numpy>=1.24,<3
 stable-baselines3>=2.3
 torch
 tensorboard
+scipy
+imageio

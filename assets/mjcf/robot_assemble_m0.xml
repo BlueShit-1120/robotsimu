@@ -5,7 +5,8 @@
 
   
   
-  <option noslip_iterations="2" noslip_tolerance="1e-8" />
+  <!-- M4 contact-grasp: stronger tangential friction solve for proxy pads. -->
+  <option noslip_iterations="20" noslip_tolerance="1e-8" impratio="20" cone="elliptic" />
 
   
   <size nstack="20000000" />
@@ -282,43 +283,45 @@
                                 
                                 <body name="right_gripper_base" pos="0 0 0" quat="0 0 1 0">
                                   <geom name="right_gripper_base_visual" type="box" size="0.043 0.035 0.03" class="visual" rgba="0.2 0.2 0.22 1" />
-                                  <geom name="right_gripper_base_collision" type="box" size="0.043 0.035 0.03" class="collision" mass="0.663" />
+                                  <!-- M4: disable base/knuckle/finger collisions so only sticky tip pads grasp (avoids table fight + box shove). -->
+                                  <geom name="right_gripper_base_collision" type="box" size="0.043 0.035 0.03" class="collision" mass="0.663" contype="0" conaffinity="0" />
                                   
                                   <body name="right_gripper_left_side" pos="0.03060114 0 0.05490452">
-                                    <joint name="right_gripper_left_finger_joint" type="hinge" axis="0 -1 0" range="0 0.8" limited="true" damping="0.02" />
+                                    <joint name="right_gripper_left_finger_joint" type="hinge" axis="0 -1 0" range="0 0.8" limited="true" damping="0.08" />
                                     <geom name="right_gripper_left_knuckle_visual" type="box" size="0.012 0.012 0.015" class="visual" rgba="0.25 0.25 0.28 1" />
-                                    <geom name="right_gripper_left_knuckle_collision" type="box" size="0.012 0.012 0.015" class="collision" mass="0.0138" />
+                                    <geom name="right_gripper_left_knuckle_collision" type="box" size="0.012 0.012 0.015" class="collision" mass="0.0138" contype="0" conaffinity="0" />
                                     <body name="right_gripper_left_finger" pos="0.03152616 0 -0.00376347">
                                       <geom name="right_gripper_left_finger_visual" type="box" size="0.01 0.012 0.025" class="visual" rgba="0.3 0.3 0.32 1" />
-                                      <geom name="right_gripper_left_finger_collision" type="box" size="0.01 0.012 0.025" class="collision" mass="0.0426" />
+                                      <geom name="right_gripper_left_finger_collision" type="box" size="0.01 0.012 0.025" class="collision" mass="0.0426" contype="0" conaffinity="0" />
                                       <body name="right_gripper_left_fingertip" pos="0.00563134 0 0.04718515">
-                                        <joint name="right_gripper_left_fingertip_joint" type="hinge" axis="0 -1 0" range="-0.8 0" limited="true" damping="0.02" />
-                                        <geom name="right_gripper_left_fingertip_visual" type="box" size="0.012 0.014 0.02" class="visual" rgba="0.15 0.15 0.18 1" />
-                                        <geom name="right_gripper_left_fingertip_collision" type="box" size="0.012 0.014 0.02" class="collision" friction="1.0 0.005 0.0001" mass="0.0427" />
+                                        <joint name="right_gripper_left_fingertip_joint" type="hinge" axis="0 -1 0" range="-0.8 0" limited="true" damping="0.08" />
+                                        <geom name="right_gripper_left_fingertip_visual" type="sphere" size="0.016" class="visual" rgba="0.15 0.15 0.18 1" />
+                                        <!-- contype=2 + workpiece conaffinity bit1: tip↔box yes, tip↔table no -->
+                                        <geom name="right_gripper_left_fingertip_collision" type="sphere" size="0.018" class="collision" friction="3.5 0.3 0.01" solref="0.045 1" solimp="0.9 0.95 0.001" condim="6" contype="2" conaffinity="0" mass="0.0427" />
                                       </body>
                                     </body>
                                   </body>
                                   <body name="right_gripper_left_inner_knuckle" pos="0.0127 0 0.06142">
-                                    <joint name="right_gripper_left_inner_knuckle_joint" type="hinge" axis="0 -1 0" range="0 0.8" limited="true" damping="0.02" />
+                                    <joint name="right_gripper_left_inner_knuckle_joint" type="hinge" axis="0 -1 0" range="0 0.8" limited="true" damping="0.08" />
                                     <geom name="right_gripper_left_inner_knuckle_visual" type="box" size="0.008 0.008 0.03" class="visual" rgba="0.35 0.35 0.38 1" />
                                     <geom name="right_gripper_left_inner_knuckle_collision" type="box" size="0.008 0.008 0.03" class="collision" mass="0.0297" contype="0" conaffinity="0" />
                                   </body>
                                   <body name="right_gripper_right_side" pos="-0.03060114 0 0.05490452">
-                                    <joint name="right_gripper_right_finger_joint" type="hinge" axis="0 -1 0" range="-0.8 0" limited="true" damping="0.02" />
+                                    <joint name="right_gripper_right_finger_joint" type="hinge" axis="0 -1 0" range="-0.8 0" limited="true" damping="0.08" />
                                     <geom name="right_gripper_right_knuckle_visual" type="box" size="0.012 0.012 0.015" class="visual" rgba="0.25 0.25 0.28 1" />
-                                    <geom name="right_gripper_right_knuckle_collision" type="box" size="0.012 0.012 0.015" class="collision" mass="0.0138" />
+                                    <geom name="right_gripper_right_knuckle_collision" type="box" size="0.012 0.012 0.015" class="collision" mass="0.0138" contype="0" conaffinity="0" />
                                     <body name="right_gripper_right_finger" pos="-0.03152616 0 -0.00376347">
                                       <geom name="right_gripper_right_finger_visual" type="box" size="0.01 0.012 0.025" class="visual" rgba="0.3 0.3 0.32 1" />
-                                      <geom name="right_gripper_right_finger_collision" type="box" size="0.01 0.012 0.025" class="collision" mass="0.0426" />
+                                      <geom name="right_gripper_right_finger_collision" type="box" size="0.01 0.012 0.025" class="collision" mass="0.0426" contype="0" conaffinity="0" />
                                       <body name="right_gripper_right_fingertip" pos="-0.00563134 0 0.04718515">
-                                        <joint name="right_gripper_right_fingertip_joint" type="hinge" axis="0 -1 0" range="0 0.8" limited="true" damping="0.02" />
-                                        <geom name="right_gripper_right_fingertip_visual" type="box" size="0.012 0.014 0.02" class="visual" rgba="0.15 0.15 0.18 1" />
-                                        <geom name="right_gripper_right_fingertip_collision" type="box" size="0.012 0.014 0.02" class="collision" friction="1.0 0.005 0.0001" mass="0.0427" />
+                                        <joint name="right_gripper_right_fingertip_joint" type="hinge" axis="0 -1 0" range="0 0.8" limited="true" damping="0.08" />
+                                        <geom name="right_gripper_right_fingertip_visual" type="sphere" size="0.016" class="visual" rgba="0.15 0.15 0.18 1" />
+                                        <geom name="right_gripper_right_fingertip_collision" type="sphere" size="0.018" class="collision" friction="3.5 0.3 0.01" solref="0.045 1" solimp="0.9 0.95 0.001" condim="6" contype="2" conaffinity="0" mass="0.0427" />
                                       </body>
                                     </body>
                                   </body>
                                   <body name="right_gripper_right_inner_knuckle" pos="-0.0127 0 0.06142">
-                                    <joint name="right_gripper_right_inner_knuckle_joint" type="hinge" axis="0 -1 0" range="-0.8 0" limited="true" damping="0.02" />
+                                    <joint name="right_gripper_right_inner_knuckle_joint" type="hinge" axis="0 -1 0" range="-0.8 0" limited="true" damping="0.08" />
                                     <geom name="right_gripper_right_inner_knuckle_visual" type="box" size="0.008 0.008 0.03" class="visual" rgba="0.35 0.35 0.38 1" />
                                     <geom name="right_gripper_right_inner_knuckle_collision" type="box" size="0.008 0.008 0.03" class="collision" mass="0.0297" contype="0" conaffinity="0" />
                                   </body>
@@ -418,14 +421,13 @@
     <motor name="left_arm_joint5" joint="left_arm_joint5" />
     <motor name="left_arm_joint6" joint="left_arm_joint6" />
     <motor name="left_arm_joint7" joint="left_arm_joint7" />
-    <!-- M1: position servos for stable right-arm reach (torque PD was gravity-drift prone) -->
-    <position name="right_arm_joint1" joint="right_arm_joint1" kp="200" kv="8" ctrlrange="-2.9322 2.9322" forcerange="-108 108" />
-    <position name="right_arm_joint2" joint="right_arm_joint2" kp="200" kv="8" ctrlrange="-2.0595 2.0595" forcerange="-108 108" />
-    <position name="right_arm_joint3" joint="right_arm_joint3" kp="150" kv="6" ctrlrange="-2.9322 2.9322" forcerange="-66 66" />
-    <position name="right_arm_joint4" joint="right_arm_joint4" kp="150" kv="6" ctrlrange="-2.4086 1.0123" forcerange="-66 66" />
-    <position name="right_arm_joint5" joint="right_arm_joint5" kp="40" kv="2" ctrlrange="-2.9322 2.9322" forcerange="-18 18" />
-    <position name="right_arm_joint6" joint="right_arm_joint6" kp="40" kv="2" ctrlrange="-1.0123 1.0123" forcerange="-18 18" />
-    <position name="right_arm_joint7" joint="right_arm_joint7" kp="40" kv="2" ctrlrange="-1.5359 1.5359" forcerange="-18 18" />
+    <position name="right_arm_joint1" joint="right_arm_joint1" kp="280" dampratio="1" />
+    <position name="right_arm_joint2" joint="right_arm_joint2" kp="280" dampratio="1" />
+    <position name="right_arm_joint3" joint="right_arm_joint3" kp="220" dampratio="1" />
+    <position name="right_arm_joint4" joint="right_arm_joint4" kp="220" dampratio="1" />
+    <position name="right_arm_joint5" joint="right_arm_joint5" kp="120" dampratio="1" />
+    <position name="right_arm_joint6" joint="right_arm_joint6" kp="120" dampratio="1" />
+    <position name="right_arm_joint7" joint="right_arm_joint7" kp="120" dampratio="1" />
     <motor name="front_left_steering_joint" joint="front_left_steering_joint" />
     <motor name="front_left_wheel_joint" joint="front_left_wheel_joint" />
     <motor name="rear_left_steering_joint" joint="rear_left_steering_joint" />
@@ -434,8 +436,9 @@
     <motor name="rear_right_wheel_joint" joint="rear_right_wheel_joint" />
     <motor name="front_right_steering_joint" joint="front_right_steering_joint" />
     <motor name="front_right_wheel_joint" joint="front_right_wheel_joint" />
-    <position name="left_gripper" joint="left_gripper_left_finger_joint" kp="50" />
-    <position name="right_gripper" joint="right_gripper_left_finger_joint" kp="50" />
+    <position name="left_gripper" joint="left_gripper_left_finger_joint" kp="50" ctrlrange="0 0.8" ctrllimited="true" />
+    <!-- M4: firmer squeeze + hard ctrl limits (prevents joint blow-up). -->
+    <position name="right_gripper" joint="right_gripper_left_finger_joint" kp="70" ctrlrange="0 0.8" ctrllimited="true" forcerange="-80 80" forcelimited="true" />
   </actuator>
   <equality>
     
