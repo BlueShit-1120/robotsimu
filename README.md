@@ -1,6 +1,6 @@
 # robotsimu — RL 抓放（M0–M4 MuJoCo）
 
-基于 [robotsimu](https://github.com/BlueShit-1120/robotsimu) DVT1 整机资产，在 **MuJoCo 3** 上实现右臂抓放：代理 Robotiq 夹爪 + 桌面长方体 + 冻结底盘；课程 **Reach → Grasp → Place**（M4：无 latch 接触抓取）。**M6**：本机 Isaac Lab 代理 URDF→USD + 场景冒烟（见 `scripts/smoke_isaac_lab.py`；不破坏 MuJoCo 路径）。
+基于 [robotsimu](https://github.com/BlueShit-1120/robotsimu) DVT1 整机资产，在 **MuJoCo 3** 上实现右臂抓放：代理 Robotiq 夹爪 + 桌面长方体 + 冻结底盘；课程 **Reach → Grasp → Place**（M4：无 latch 接触抓取）。**M6**：本机 Isaac Lab 代理 URDF→USD + 场景冒烟。**M7**：Isaac Lab ManagerBased Reach/Grasp（8/31 对齐 MuJoCo；`scripts/smoke_isaac_reach_grasp.py`）。
 
 | 项 | 值 |
 |----|-----|

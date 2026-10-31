@@ -20,7 +20,12 @@ _RIGHT_ARM_HOME_GRASP = {
 }
 
 
-def build_spr_robot_cfg(*, prefer_usd: bool = True, fix_base: bool = True):
+def build_spr_robot_cfg(
+    *,
+    prefer_usd: bool = True,
+    fix_base: bool = True,
+    activate_contact_sensors: bool = False,
+):
     """Return ArticulationCfg spawning from USD (if present) or proxy URDF.
 
     Parameters
@@ -29,6 +34,8 @@ def build_spr_robot_cfg(*, prefer_usd: bool = True, fix_base: bool = True):
         Use pre-converted USD when ``ROBOT_USD`` exists; else spawn via UrdfFileCfg.
     fix_base:
         Weld ``base_link`` (D4).
+    activate_contact_sensors:
+        Enable PhysX contact reporters (needed for fingertip ContactSensor).
     """
     import isaaclab.sim as sim_utils
     from isaaclab.actuators import ImplicitActuatorCfg
@@ -60,7 +67,7 @@ def build_spr_robot_cfg(*, prefer_usd: bool = True, fix_base: bool = True):
     if prefer_usd and ROBOT_USD.is_file():
         spawn = sim_utils.UsdFileCfg(
             usd_path=str(ROBOT_USD.resolve()),
-            activate_contact_sensors=False,
+            activate_contact_sensors=activate_contact_sensors,
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 disable_gravity=False,
                 max_depenetration_velocity=5.0,
@@ -81,6 +88,7 @@ def build_spr_robot_cfg(*, prefer_usd: bool = True, fix_base: bool = True):
             fix_base=fix_base,
             force_usd_conversion=True,
             merge_fixed_joints=False,
+            activate_contact_sensors=activate_contact_sensors,
             joint_drive=sim_utils.UrdfConverterCfg.JointDriveCfg(
                 gains=sim_utils.UrdfConverterCfg.JointDriveCfg.PDGainsCfg(
                     stiffness=80.0,
