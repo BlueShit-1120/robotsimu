@@ -24,3 +24,5 @@ runs/**/tb/
 .venv/
 runs/
 store-mirror/
+# Generated Isaac USD (regenerate via scripts/convert_robot_usd.py)
+assets/isaac/usd/

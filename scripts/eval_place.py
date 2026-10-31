@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate M3 Place PPO checkpoint (full pick-place success)."""
+"""Evaluate M3/M5 Place PPO checkpoint (full pick-place success)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ sys.path.insert(0, str(_REPO / "src"))
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="M3 Place PPO eval")
+    p = argparse.ArgumentParser(description="M3/M5 Place PPO eval")
     p.add_argument("--checkpoint", type=str, required=True)
     p.add_argument("--episodes", type=int, default=100)
     p.add_argument("--hover-offset", type=float, default=0.06)
@@ -21,18 +21,46 @@ def main() -> int:
     p.add_argument("--place-tol-xy", type=float, default=0.12)
     p.add_argument("--place-tol-z", type=float, default=0.04)
     p.add_argument("--place-stable-steps", type=int, default=3)
-    p.add_argument("--delta-q-scale", type=float, default=0.05)
-    p.add_argument("--max-episode-steps", type=int, default=200)
+    p.add_argument("--delta-q-scale", type=float, default=None)
+    p.add_argument("--max-episode-steps", type=int, default=None)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=str, default=None)
     p.add_argument("--no-latch", action="store_true")
     p.add_argument("--full-pick", action="store_true")
+    p.add_argument(
+        "--bootstrap-grasp",
+        type=str,
+        default=None,
+        help="Frozen grasp SB3 zip until lift (M5 cascade eval)",
+    )
+    p.add_argument(
+        "--contact-hold",
+        action="store_true",
+        help="Acquire kinematic hold only after dual pad↔box contact (M5)",
+    )
+    p.add_argument(
+        "--carry-assist",
+        action="store_true",
+        help="Keep grip closed after lift until near place goal (match train)",
+    )
+    p.add_argument(
+        "--stochastic",
+        action="store_true",
+        help="Sample actions (PPO train-time); default is deterministic mean",
+    )
     args = p.parse_args()
+    if args.delta_q_scale is None:
+        args.delta_q_scale = 0.03 if (args.no_latch and args.full_pick) else 0.05
+    if args.max_episode_steps is None:
+        args.max_episode_steps = 250 if args.full_pick else 200
 
     import numpy as np
     from stable_baselines3 import PPO
 
-    from robot_simu_rl.backends.mujoco import PickPlaceMujocoEnv
+    from robot_simu_rl.backends.mujoco import (
+        GraspBootstrapWrapper,
+        PickPlaceMujocoEnv,
+    )
 
     env = PickPlaceMujocoEnv(
         phase="place",
@@ -47,8 +75,13 @@ def main() -> int:
         hold_gripper_open=False,
         early_terminate_success=True,
         grasp_latch=not args.no_latch,
+        contact_hold=bool(args.contact_hold),
         place_start_holding=not args.full_pick,
+        carry_assist=bool(args.carry_assist),
     )
+    if args.bootstrap_grasp:
+        grasp_model = PPO.load(args.bootstrap_grasp, device="cpu")
+        env = GraspBootstrapWrapper(env, grasp_model, deterministic=True)
     model = PPO.load(args.checkpoint, device="cpu")
 
     successes = 0
@@ -62,7 +95,7 @@ def main() -> int:
         last_info = info
         saw_grasp = False
         while not done:
-            action, _ = model.predict(obs, deterministic=True)
+            action, _ = model.predict(obs, deterministic=not args.stochastic)
             obs, reward, terminated, truncated, last_info = env.step(action)
             ep_ret += float(reward)
             if last_info.get("grasp_success") or last_info.get("latched"):
@@ -85,6 +118,7 @@ def main() -> int:
     summary = {
         "phase": "place",
         "checkpoint": args.checkpoint,
+        "bootstrap_grasp": args.bootstrap_grasp,
         "episodes": args.episodes,
         "successes": successes,
         "success_rate": rate,
@@ -94,12 +128,19 @@ def main() -> int:
         "place_tol_xy": args.place_tol_xy,
         "place_tol_z": args.place_tol_z,
         "lift_height": args.lift_height,
+        "full_pick": bool(args.full_pick),
+        "grasp_latch": not args.no_latch,
+        "contact_hold": bool(args.contact_hold),
+        "carry_assist": bool(args.carry_assist),
+        "deterministic": not bool(args.stochastic),
         "exit_criterion": "full pick-place >= 50% over >=100 eval episodes",
         "exit_met": rate >= 0.50,
+        "nonzero_place": successes > 0,
     }
     print(
         f"[eval_place] {successes}/{args.episodes} "
-        f"rate={rate:.2%} exit_met={summary['exit_met']}"
+        f"rate={rate:.2%} exit_met={summary['exit_met']} "
+        f"nonzero={summary['nonzero_place']}"
     )
     out = (
         Path(args.out)
