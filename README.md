@@ -1,6 +1,6 @@
 # robotsimu — RL 抓放（M0–M4 MuJoCo）
 
-基于 [robotsimu](https://github.com/BlueShit-1120/robotsimu) DVT1 整机资产，在 **MuJoCo 3** 上实现右臂抓放：代理 Robotiq 夹爪 + 桌面长方体 + 冻结底盘；课程 **Reach → Grasp → Place**（M4：无 latch 接触抓取）。**M6**：本机 Isaac Lab 代理 URDF→USD + 场景冒烟。**M7**：Isaac Lab ManagerBased Reach/Grasp（8/31 对齐 MuJoCo；`scripts/smoke_isaac_reach_grasp.py`）。
+基于 [robotsimu](https://github.com/BlueShit-1120/robotsimu) DVT1 整机资产，在 **MuJoCo 3** 上实现右臂抓放：代理 Robotiq 夹爪 + 桌面长方体 + 冻结底盘；课程 **Reach → Grasp → Place**（M4：无 latch 接触抓取）。**M6**：本机 Isaac Lab 代理 URDF→USD + 场景冒烟。**M7**：Isaac Lab ManagerBased Reach/Grasp（8/31 对齐 MuJoCo；`scripts/smoke_isaac_reach_grasp.py`）。**M8/M9**：Lab RL extras + Isaac Reach SB3 短训（`scripts/train_isaac_reach.py`）。
 
 | 项 | 值 |
 |----|-----|
@@ -41,6 +41,13 @@ python scripts/train_grasp.py --timesteps 500000 --out runs/grasp_m4 --no-latch 
   --lift-height 0.03 --delta-q-scale 0.03 --device cpu --seed 17
 python scripts/eval_grasp.py --checkpoint runs/grasp_m4/ppo_grasp.zip \
   --episodes 100 --no-latch --lift-height 0.03 --delta-q-scale 0.03
+
+# M9 Isaac Lab Reach 短训（需 conda env_isaacsim + Lab RL extras）
+conda activate env_isaacsim
+export OMNI_KIT_ACCEPT_EULA=YES PYTHONNOUSERSITE=1 TERM=xterm
+cd ~/IsaacLab
+./isaaclab.sh -p /path/to/robotsimu/scripts/train_isaac_reach.py \
+  --headless --timesteps 8192 --num-envs 4 --out runs/isaac_reach_m9
 ```
 
 Conda：`conda env create -f environment-mujoco.yml && conda activate rs-mujoco`。
