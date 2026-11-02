@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Short Isaac Lab Reach PPO train (SB3) on ManagerBased ReachGraspEnv.
+"""Isaac Lab Reach PPO train (SB3) on ManagerBased ReachGraspEnv.
+
+Supports short smoke (8k) and longer MuJoCo-M1-comparable runs (100k–200k).
 
 Usage (conda env_isaacsim)::
 
     export OMNI_KIT_ACCEPT_EULA=YES PYTHONNOUSERSITE=1 TERM=xterm
     cd ~/IsaacLab
     ./isaaclab.sh -p /path/to/robotsimu/scripts/train_isaac_reach.py \\
-        --headless --timesteps 8192 --num-envs 4 --out runs/isaac_reach_m9
+        --headless --timesteps 100000 --num-envs 4 --out runs/isaac_reach_long --seed 0
 """
 
 from __future__ import annotations
@@ -22,9 +24,9 @@ sys.path.insert(0, str(REPO / "src"))
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Isaac Lab Reach PPO short train (SB3).")
-    parser.add_argument("--timesteps", type=int, default=8192)
-    parser.add_argument("--out", type=str, default="runs/isaac_reach_m9")
+    parser = argparse.ArgumentParser(description="Isaac Lab Reach PPO train (SB3).")
+    parser.add_argument("--timesteps", type=int, default=100_000)
+    parser.add_argument("--out", type=str, default="runs/isaac_reach_long")
     parser.add_argument("--num-envs", type=int, default=4)
     parser.add_argument("--hover-offset", type=float, default=0.30)
     parser.add_argument("--success-dist", type=float, default=0.05)
