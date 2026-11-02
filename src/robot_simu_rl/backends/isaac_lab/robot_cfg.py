@@ -8,7 +8,17 @@ from __future__ import annotations
 from robot_simu_rl.backends.isaac_lab.paths import PROXY_URDF, ROBOT_USD
 from robot_simu_rl.common.joints import LOCKED_QPOS, URDF_RIGHT_ARM_JOINTS, URDF_RIGHT_GRIPPER_JOINT
 
-# Grasp-near home from MuJoCo M4 (rad); used as default arm pose for smoke/reach.
+# MuJoCo M1/M2 home nearer box spawn (0.70, -0.20) — use for Reach.
+_RIGHT_ARM_HOME_NEAR = {
+    "right_arm_joint1": -0.4923,
+    "right_arm_joint2": -1.1724,
+    "right_arm_joint3": -0.1493,
+    "right_arm_joint4": -0.8018,
+    "right_arm_joint5": -0.2582,
+    "right_arm_joint6": -0.2665,
+    "right_arm_joint7": 0.0375,
+}
+# MuJoCo M4 contact-grasp home — use for Grasp / smoke default.
 _RIGHT_ARM_HOME_GRASP = {
     "right_arm_joint1": -0.38357,
     "right_arm_joint2": -1.04487,
@@ -25,6 +35,7 @@ def build_spr_robot_cfg(
     prefer_usd: bool = True,
     fix_base: bool = True,
     activate_contact_sensors: bool = False,
+    arm_home: str = "grasp",
 ):
     """Return ArticulationCfg spawning from USD (if present) or proxy URDF.
 
@@ -36,10 +47,19 @@ def build_spr_robot_cfg(
         Weld ``base_link`` (D4).
     activate_contact_sensors:
         Enable PhysX contact reporters (needed for fingertip ContactSensor).
+    arm_home:
+        ``\"near\"`` → MuJoCo M1 Reach home; ``\"grasp\"`` → M4 grasp home.
     """
     import isaaclab.sim as sim_utils
     from isaaclab.actuators import ImplicitActuatorCfg
     from isaaclab.assets.articulation import ArticulationCfg
+
+    if arm_home == "near":
+        arm_home_joints = _RIGHT_ARM_HOME_NEAR
+    elif arm_home == "grasp":
+        arm_home_joints = _RIGHT_ARM_HOME_GRASP
+    else:
+        raise ValueError(f"Unknown arm_home={arm_home!r}; expected 'near' or 'grasp'")
 
     # URDF joint names only (skip MJCF gripper aliases in LOCKED_QPOS).
     _lock_keys = (
@@ -60,7 +80,7 @@ def build_spr_robot_cfg(
     joint_pos = {
         **{k: float(LOCKED_QPOS[k]) for k in _lock_keys if k in LOCKED_QPOS},
         "left_robotiq_85_left_knuckle_joint": 0.0,
-        **_RIGHT_ARM_HOME_GRASP,
+        **arm_home_joints,
         URDF_RIGHT_GRIPPER_JOINT: 0.0,
     }
 
@@ -74,8 +94,8 @@ def build_spr_robot_cfg(
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
                 enabled_self_collisions=False,
-                solver_position_iteration_count=8,
-                solver_velocity_iteration_count=1,
+                solver_position_iteration_count=32,
+                solver_velocity_iteration_count=4,
             ),
         )
     else:
@@ -102,8 +122,8 @@ def build_spr_robot_cfg(
             ),
             articulation_props=sim_utils.ArticulationRootPropertiesCfg(
                 enabled_self_collisions=False,
-                solver_position_iteration_count=8,
-                solver_velocity_iteration_count=1,
+                solver_position_iteration_count=32,
+                solver_velocity_iteration_count=4,
             ),
         )
 
@@ -114,11 +134,13 @@ def build_spr_robot_cfg(
             joint_pos=joint_pos,
         ),
         actuators={
+            # High effort + stiff PD; PhysX still lags gravity vs MuJoCo kp=280,
+            # so DeltaJointPositionAction latches absolute q_des (see actions.py).
             "right_arm": ImplicitActuatorCfg(
                 joint_names_expr=list(URDF_RIGHT_ARM_JOINTS),
-                effort_limit_sim=108.0,
-                stiffness=80.0,
-                damping=4.0,
+                effort_limit_sim=1.0e5,
+                stiffness=2000.0,
+                damping=200.0,
             ),
             # One regex per joint — Lab forbids overlapping exprs for the same DOF.
             "right_gripper": ImplicitActuatorCfg(

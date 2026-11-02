@@ -56,7 +56,7 @@ def main() -> None:
     parser.add_argument("--num-envs", type=int, default=1, help="Prefer 1 for episode accounting.")
     parser.add_argument("--hover-offset", type=float, default=0.30)
     parser.add_argument("--success-dist", type=float, default=0.05)
-    parser.add_argument("--delta-q-scale", type=float, default=0.05)
+    parser.add_argument("--delta-q-scale", type=float, default=0.06)
     parser.add_argument("--max-episode-steps", type=int, default=200)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--force-urdf", action="store_true")

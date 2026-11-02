@@ -31,11 +31,13 @@ def _build_scene(
     env_spacing: float,
     prefer_usd: bool,
     enable_contact: bool,
+    arm_home: str = "grasp",
 ):
     robot_cfg = build_spr_robot_cfg(
         prefer_usd=prefer_usd,
         fix_base=True,
         activate_contact_sensors=enable_contact,
+        arm_home=arm_home,
     )
     robot_cfg.prim_path = "{ENV_REGEX_NS}/Robot"
 
@@ -190,31 +192,44 @@ class ReachGraspEnvCfg(ManagerBasedRLEnvCfg):
     env_spacing: float = 3.0
 
     def __post_init__(self):
+        # Control 50 Hz (dt=0.01, decimation=2). Finer 500 Hz PhysX was ~6× slower
+        # with little gain once Δq targets are latched (see mdp/actions.py).
+        self.sim.dt = 0.01
         self.decimation = 2
         self.episode_length_s = 8.0  # 50 Hz control → 400 steps like MuJoCo default
-        self.sim.dt = 0.01
         self.sim.render_interval = self.decimation
         self.viewer.eye = (1.8, -1.2, 1.4)
         self.viewer.lookat = (0.5, -0.1, 0.8)
 
+        # Reach uses MuJoCo M1 near-home; Grasp keeps M4 grasp-home.
+        arm_home = "near" if self.phase == "reach" else "grasp"
         self.scene = _build_scene(
             num_envs=int(self.num_envs),
             env_spacing=float(self.env_spacing),
             prefer_usd=self.prefer_usd,
             enable_contact=bool(self.enable_contact and self.phase == "grasp"),
+            arm_home=arm_home,
         )
 
         self.actions.arm_action.scale = self.delta_q_scale
         self.actions.arm_action.joint_names = list(URDF_RIGHT_ARM_JOINTS)
         self.actions.gripper_action.hold_open = self.phase == "reach"
 
+        # Isaac Lab RewardManager multiplies terms by step_dt (= sim.dt * decimation).
+        # MuJoCo returns per-control-step rewards without that factor — compensate so
+        # −dist / progress / success bonuses match M1 magnitudes for SB3 PPO.
+        step_dt = float(self.sim.dt) * float(self.decimation)
+        reward_dt_scale = 1.0 / max(step_dt, 1e-6)
+
         if self.phase == "grasp":
             self.rewards = RewardsGraspCfg()
             self.rewards.grasp.params["lift_height"] = self.lift_height
+            self.rewards.grasp.weight = reward_dt_scale
         else:
             self.rewards = RewardsReachCfg()
             self.rewards.reach.params["hover_offset"] = self.hover_offset
             self.rewards.reach.params["success_dist"] = self.success_dist
+            self.rewards.reach.weight = reward_dt_scale
 
         if not self.early_terminate_success:
             self.terminations.success = None

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """Isaac Lab Reach PPO train (SB3) on ManagerBased ReachGraspEnv.
 
-Supports short smoke (8k) and longer MuJoCo-M1-comparable runs (100k–200k).
+Defaults aligned with MuJoCo M1: delta_q_scale=0.06, hover=0.30, success_dist=0.05,
+and PPO rollout size ≈2048 (n_steps * num_envs).
 
 Usage (conda env_isaacsim)::
 
     export OMNI_KIT_ACCEPT_EULA=YES PYTHONNOUSERSITE=1 TERM=xterm
     cd ~/IsaacLab
     ./isaaclab.sh -p /path/to/robotsimu/scripts/train_isaac_reach.py \\
-        --headless --timesteps 100000 --num-envs 4 --out runs/isaac_reach_long --seed 0
+        --headless --timesteps 200000 --num-envs 4 --out runs/isaac_reach_m12 --seed 0
 """
 
 from __future__ import annotations
@@ -25,15 +26,16 @@ sys.path.insert(0, str(REPO / "src"))
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Isaac Lab Reach PPO train (SB3).")
-    parser.add_argument("--timesteps", type=int, default=100_000)
-    parser.add_argument("--out", type=str, default="runs/isaac_reach_long")
+    parser.add_argument("--timesteps", type=int, default=200_000)
+    parser.add_argument("--out", type=str, default="runs/isaac_reach_m12")
     parser.add_argument("--num-envs", type=int, default=4)
     parser.add_argument("--hover-offset", type=float, default=0.30)
     parser.add_argument("--success-dist", type=float, default=0.05)
-    parser.add_argument("--delta-q-scale", type=float, default=0.05)
+    parser.add_argument("--delta-q-scale", type=float, default=0.06)
     parser.add_argument("--max-episode-steps", type=int, default=200)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--n-steps", type=int, default=256)
+    # MuJoCo M1 uses n_steps=2048 with 1 env; keep total rollout ≈2048.
+    parser.add_argument("--n-steps", type=int, default=512)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
     parser.add_argument("--force-urdf", action="store_true")

@@ -34,7 +34,13 @@ class DeltaJointPositionAction(ActionTerm):
         self._num_joints = len(self._joint_ids)
         self._raw_actions = torch.zeros(self.num_envs, self._num_joints, device=self.device)
         self._processed_actions = torch.zeros_like(self._raw_actions)
+        # Latched absolute targets: integrate Δq from reset pose instead of
+        # ``q_des = q + Δq`` every step. PhysX implicit PD can lag gravity within
+        # one control period; re-reading ``q`` then makes a=0 chase the drift
+        # (MuJoCo's stiffer servos hide this). Latch matches ideal Δq semantics.
+        self._q_des = torch.zeros_like(self._raw_actions)
         self._scale = float(self.cfg.scale)
+        self._q_des_initialized = False
 
     @property
     def action_dim(self) -> int:
@@ -51,14 +57,23 @@ class DeltaJointPositionAction(ActionTerm):
     def process_actions(self, actions: torch.Tensor) -> None:
         # MuJoCo clips arm Δq cmds to [-1, 1] before scaling.
         self._raw_actions[:] = actions.clamp(-1.0, 1.0)
-        q = self._asset.data.joint_pos[:, self._joint_ids]
-        self._processed_actions = q + self._scale * self._raw_actions
+        if not self._q_des_initialized:
+            self._q_des[:] = self._asset.data.joint_pos[:, self._joint_ids]
+            self._q_des_initialized = True
+        self._q_des = self._q_des + self._scale * self._raw_actions
+        self._processed_actions = self._q_des
 
     def apply_actions(self) -> None:
         self._asset.set_joint_position_target(self._processed_actions, joint_ids=self._joint_ids)
 
     def reset(self, env_ids: Sequence[int] | None = None) -> None:
-        self._raw_actions[env_ids] = 0.0
+        if env_ids is None:
+            self._raw_actions.zero_()
+            self._q_des[:] = self._asset.data.joint_pos[:, self._joint_ids]
+        else:
+            self._raw_actions[env_ids] = 0.0
+            self._q_des[env_ids] = self._asset.data.joint_pos[:, self._joint_ids][env_ids]
+        self._q_des_initialized = True
 
 
 @configclass
