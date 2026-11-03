@@ -141,6 +141,9 @@ def main() -> None:
         tip_dists: list[float] = []
         holdings: list[bool] = []
         pinches: list[bool] = []
+        any_holds: list[bool] = []
+        any_pinches: list[bool] = []
+        peak_forces: list[float] = []
         returns: list[float] = []
         ep_ret = np.zeros(args.num_envs, dtype=np.float64)
         # Track peak + sustained success; terminal metrics are the hold gate.
@@ -214,8 +217,10 @@ def main() -> None:
                 if len(successes) >= args.episodes:
                     break
                 term_z = float(ep_last["box_z"][i]) if np.isfinite(ep_last["box_z"][i]) else float("nan")
-                term_hold = bool(ep_last["holding"][i])
                 term_pinch = bool(ep_last["pinch"][i])
+                # M15: holding ⊇ pinch (dual-tip contact ⇒ hold). Or-ing covers
+                # any reward/log lag on the terminal step.
+                term_hold = bool(ep_last["holding"][i] or term_pinch)
                 # Steady-hold success: sustained grasp_ok during ep, OR terminal
                 # box still elevated while holding (not peak bounce alone).
                 z0 = 0.75
@@ -227,13 +232,16 @@ def main() -> None:
                 tip_dists.append(float(ep_last["dist"][i]) if np.isfinite(ep_last["dist"][i]) else float("nan"))
                 holdings.append(term_hold)
                 pinches.append(term_pinch)
+                any_holds.append(bool(ep_any_hold[i]))
+                any_pinches.append(bool(ep_any_pinch[i]))
+                peak_forces.append(float(ep_peak_tip_force[i]))
                 returns.append(float(ep_ret[i]))
                 print(
                     f"  ep={len(successes) - 1:02d} env={int(i)} success={ok} "
                     f"box_z={box_zs[-1]:.3f} peak_lift={lifts[-1]:.3f} "
                     f"tip_dist={tip_dists[-1]:.3f} hold={holdings[-1]} pinch={pinches[-1]} "
-                    f"any_hold={bool(ep_any_hold[i])} peak_F={ep_peak_tip_force[i]:.3f} "
-                    f"ret={ep_ret[i]:.2f}"
+                    f"any_hold={bool(ep_any_hold[i])} any_pinch={bool(ep_any_pinch[i])} "
+                    f"peak_F={ep_peak_tip_force[i]:.3f} ret={ep_ret[i]:.2f}"
                 )
                 ep_ret[i] = 0.0
                 ep_success[i] = False
@@ -246,6 +254,8 @@ def main() -> None:
         rate = float(sum(successes) / max(n, 1))
         term_hold_rate = float(sum(holdings) / max(n, 1))
         term_pinch_rate = float(sum(pinches) / max(n, 1))
+        any_hold_rate = float(sum(any_holds) / max(n, 1))
+        any_pinch_rate = float(sum(any_pinches) / max(n, 1))
         elevated_n = sum(
             1 for z in box_zs if np.isfinite(z) and z > 0.75 + args.lift_height
         )
@@ -259,6 +269,9 @@ def main() -> None:
                 "success_rate": rate,
                 "terminal_holding_rate": term_hold_rate,
                 "terminal_pinch_rate": term_pinch_rate,
+                "any_holding_rate": any_hold_rate,
+                "any_pinch_rate": any_pinch_rate,
+                "mean_peak_tip_force": float(np.mean(peak_forces)) if peak_forces else 0.0,
                 "terminal_elevated_rate": float(elevated_n / max(n, 1)),
                 "success_criterion": "sustained grasp_ok (hold_steps) OR terminal elevated+holding",
                 "mean_box_z": float(np.nanmean(box_zs)) if box_zs else float("nan"),
@@ -296,7 +309,9 @@ def main() -> None:
             f"rate={rate:.2f} mean_box_z={summary['mean_box_z']:.3f} "
             f"mean_lift={summary['mean_lift']:.3f} mean_tip={summary['mean_tip_box_dist']:.3f} "
             f"hold={term_hold_rate:.2f} pinch={term_pinch_rate:.2f} "
-            f"elevated={summary['terminal_elevated_rate']:.2f}"
+            f"any_hold={any_hold_rate:.2f} any_pinch={any_pinch_rate:.2f} "
+            f"elevated={summary['terminal_elevated_rate']:.2f} "
+            f"peak_F={summary['mean_peak_tip_force']:.1f}"
         )
         print(f"[eval_isaac_grasp] wrote {out}")
         vec_env.close()

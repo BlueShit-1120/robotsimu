@@ -200,11 +200,14 @@ def grasp_reward(
     pinch_sensor = left_hit & right_hit
     near = dist < 0.08
     close_tip = dist < 0.05
-    closed = grip_norm > 0.35
+    closed = grip_norm > 0.30
+    closed_soft = grip_norm > 0.18
     pinch_geom = _geometric_pinch(robot, env, box, closed, dist)
     pinch = pinch_sensor | pinch_geom
-    # Holding needs a real pinch (sensor or geometry)—not open-finger tip-mid.
-    holding = pinch & closed
+    # Holding: dual-tip pinch (sensor force is ground truth even if knuckle joint
+    # lags) OR tip-near+closed with ≥1 tip force. Never open-finger tip-mid alone.
+    one_tip = left_hit | right_hit
+    holding = pinch | (close_tip & closed & one_tip)
 
     r = -0.8 * dist + 1.2 * progress - 0.05
     r = r - 0.15 * torch.clamp(dist_box - 0.25, min=0.0)
@@ -213,8 +216,8 @@ def grasp_reward(
     r = r + torch.where(near, 10.0 * grip_cmd + 8.0 * grip_norm, torch.zeros_like(r))
     r = r - torch.where(close_tip & ~closed, 20.0 * (1.0 - grip_cmd), torch.zeros_like(r))
     r = r + torch.where(close_tip & closed, 15.0 * grip_norm, torch.zeros_like(r))
-    r = r + torch.where(near & (left_hit | right_hit), torch.full_like(r, 10.0), 0.0)
-    r = r + torch.where(pinch, torch.full_like(r, 25.0), 0.0)
+    r = r + torch.where(near & one_tip, torch.full_like(r, 12.0), 0.0)
+    r = r + torch.where(pinch, torch.full_like(r, 30.0), 0.0)
     r = r - torch.where(~near, 1.5 * grip_cmd, torch.zeros_like(r))
     # Penalize tip-near while fingers stay open (dominant M14 local optimum).
     r = r - torch.where(close_tip & (grip_norm < 0.2), torch.full_like(r, 15.0), 0.0)
@@ -236,10 +239,10 @@ def grasp_reward(
     )
     r = r + torch.where(holding, 8.0 * grip_cmd, torch.zeros_like(r))
 
-    # Sustained hold+lift (not a single-frame bounce).
+    # Sustained dual-pinch lift (not single-frame bounce / one-tip bump).
     if not hasattr(env, "_hold_lift_steps"):
         env._hold_lift_steps = torch.zeros(env.num_envs, dtype=torch.long, device=env.device)
-    cand = holding & (lift > lift_height)
+    cand = pinch & closed_soft & (lift > lift_height)
     env._hold_lift_steps = torch.where(
         cand, env._hold_lift_steps + 1, torch.zeros_like(env._hold_lift_steps)
     )
