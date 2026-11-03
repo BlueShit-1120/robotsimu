@@ -6,7 +6,11 @@ from robot_simu_rl.backends.isaac_lab.mdp.actions import (
     DeltaJointPositionAction,
     DeltaJointPositionActionCfg,
 )
-from robot_simu_rl.backends.isaac_lab.mdp.events import reset_aux_buffers, reset_scene_and_workpiece
+from robot_simu_rl.backends.isaac_lab.mdp.events import (
+    apply_m4_contact_stack,
+    reset_aux_buffers,
+    reset_scene_and_workpiece,
+)
 from robot_simu_rl.backends.isaac_lab.mdp.observations import mujoco_style_obs
 from robot_simu_rl.backends.isaac_lab.mdp.rewards import (
     grasp_reward,
@@ -19,6 +23,7 @@ __all__ = [
     "AbsoluteGripperActionCfg",
     "DeltaJointPositionAction",
     "DeltaJointPositionActionCfg",
+    "apply_m4_contact_stack",
     "reset_aux_buffers",
     "reset_scene_and_workpiece",
     "mujoco_style_obs",

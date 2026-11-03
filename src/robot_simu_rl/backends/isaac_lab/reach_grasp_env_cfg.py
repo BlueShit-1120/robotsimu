@@ -65,11 +65,13 @@ def _build_scene(
                 disable_gravity=False,
             ),
             collision_props=sim_utils.CollisionPropertiesCfg(),
-            # Higher friction for no-latch contact lift (MuJoCo M4 tip μ≈3.5; proxy tips are weaker).
+            # MuJoCo M4 workpiece friction (tip pads use μ≈3.5 via apply_m4_contact_stack).
             physics_material=sim_utils.RigidBodyMaterialCfg(
-                static_friction=2.5,
-                dynamic_friction=2.0,
+                static_friction=3.5,
+                dynamic_friction=3.0,
                 restitution=0.0,
+                friction_combine_mode="max",
+                restitution_combine_mode="min",
             ),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.85, 0.35, 0.15)),
         ),
@@ -144,6 +146,8 @@ class ObservationsCfg:
 
 @configclass
 class EventCfg:
+    # M4 contact stack: tip μ≈3.5, tip–table FilteredPairs, non-tip grip col off.
+    m4_contact = EventTerm(func=mdp.apply_m4_contact_stack, mode="startup")
     reset = EventTerm(func=mdp.reset_scene_and_workpiece, mode="reset")
 
 
@@ -199,6 +203,12 @@ class ReachGraspEnvCfg(ManagerBasedRLEnvCfg):
         self.decimation = 2
         self.episode_length_s = 8.0  # 50 Hz control → 400 steps like MuJoCo default
         self.sim.render_interval = self.decimation
+        # PhysX noslip-ish: tighter friction patches + more position iters (M4 noslip=20).
+        self.sim.physx.bounce_threshold_velocity = 0.2
+        self.sim.physx.friction_offset_threshold = 0.04
+        self.sim.physx.friction_correlation_distance = 0.006
+        self.sim.physx.min_position_iteration_count = 8
+        self.sim.physx.enable_stabilization = True
         self.viewer.eye = (1.8, -1.2, 1.4)
         self.viewer.lookat = (0.5, -0.1, 0.8)
 

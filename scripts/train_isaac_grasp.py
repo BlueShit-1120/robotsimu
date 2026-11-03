@@ -9,7 +9,7 @@ Usage (conda env_isaacsim)::
     export OMNI_KIT_ACCEPT_EULA=YES PYTHONNOUSERSITE=1 TERM=xterm
     cd ~/IsaacLab
     ./isaaclab.sh -p /path/to/robotsimu/scripts/train_isaac_grasp.py \\
-        --headless --timesteps 100000 --num-envs 4 --out runs/isaac_grasp_m13 --seed 0
+        --headless --timesteps 200000 --num-envs 4 --out runs/isaac_grasp_m14 --seed 0
 """
 
 from __future__ import annotations
@@ -26,8 +26,8 @@ sys.path.insert(0, str(REPO / "src"))
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Isaac Lab Grasp PPO train (SB3).")
-    parser.add_argument("--timesteps", type=int, default=100_000)
-    parser.add_argument("--out", type=str, default="runs/isaac_grasp_m13")
+    parser.add_argument("--timesteps", type=int, default=200_000)
+    parser.add_argument("--out", type=str, default="runs/isaac_grasp_m14")
     parser.add_argument("--num-envs", type=int, default=4)
     parser.add_argument("--hover-offset", type=float, default=0.06)
     parser.add_argument("--lift-height", type=float, default=0.03)
