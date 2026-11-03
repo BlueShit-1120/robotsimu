@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 _BOX_XY = (0.70, -0.20)
 _BOX_Z = 0.765
 _BOX_Z0 = 0.75  # table top (approx; half-height 0.015 → center 0.765)
+# MuJoCo M3 place goal (≈8 cm from spawn toward +Y).
+_PLACE_GOAL_XY = (0.70, -0.12)
 
 # MuJoCo M4 right fingertip pads (sphere r=0.018, μ≈3.5, tip↔table filtered).
 _RIGHT_TIP_BODY_NAMES = (
@@ -36,13 +38,31 @@ def reset_aux_buffers(
         env._reached_once = torch.zeros(n, dtype=torch.bool, device=env.device)
         env._lifted_once = torch.zeros(n, dtype=torch.bool, device=env.device)
         env._hold_lift_steps = torch.zeros(n, dtype=torch.long, device=env.device)
+        env._place_ok_steps = torch.zeros(n, dtype=torch.long, device=env.device)
+        env._placed_once = torch.zeros(n, dtype=torch.bool, device=env.device)
+        env._ever_held = torch.zeros(n, dtype=torch.bool, device=env.device)
+        env._place_hold_active = torch.zeros(n, dtype=torch.bool, device=env.device)
+        env._prev_place_dist = torch.zeros(n, device=env.device)
         env._box_z0 = torch.full((n,), _BOX_Z0, device=env.device)
+        env._place_goal_xy = torch.tensor(_PLACE_GOAL_XY, device=env.device, dtype=torch.float32)
     if not hasattr(env, "_hold_lift_steps"):
         env._hold_lift_steps = torch.zeros(n, dtype=torch.long, device=env.device)
+    if not hasattr(env, "_place_ok_steps"):
+        env._place_ok_steps = torch.zeros(n, dtype=torch.long, device=env.device)
+        env._placed_once = torch.zeros(n, dtype=torch.bool, device=env.device)
+        env._ever_held = torch.zeros(n, dtype=torch.bool, device=env.device)
+        env._place_hold_active = torch.zeros(n, dtype=torch.bool, device=env.device)
+        env._prev_place_dist = torch.zeros(n, device=env.device)
+        env._place_goal_xy = torch.tensor(_PLACE_GOAL_XY, device=env.device, dtype=torch.float32)
     env._prev_task_dist[env_ids] = 0.0
     env._reached_once[env_ids] = False
     env._lifted_once[env_ids] = False
     env._hold_lift_steps[env_ids] = 0
+    env._place_ok_steps[env_ids] = 0
+    env._placed_once[env_ids] = False
+    env._ever_held[env_ids] = False
+    env._place_hold_active[env_ids] = False
+    env._prev_place_dist[env_ids] = 0.0
     env._box_z0[env_ids] = _BOX_Z0
 
 
@@ -54,16 +74,30 @@ def reset_scene_and_workpiece(
     randomize_box: bool = False,
     xy_half_range: float = 0.04,
 ) -> None:
-    """Reset robot/object to defaults, then place workpiece at MuJoCo spawn."""
-    del robot_cfg  # defaults handle robot via reset_scene_to_default
+    """Reset robot/object; Place phase may seed holding (M3 C3 release curriculum)."""
     reset_scene_to_default(env, env_ids, reset_joint_targets=True)
 
     obj = env.scene[object_cfg.name]
+    robot = env.scene[robot_cfg.name]
     n = len(env_ids)
+    phase = getattr(env.cfg, "phase", "reach")
+    place_start_holding = bool(getattr(env.cfg, "place_start_holding", phase == "place"))
+    lift_height = float(getattr(env.cfg, "lift_height", 0.03))
+    place_tol_xy = float(getattr(env.cfg, "place_tol_xy", 0.12))
+
     pos = torch.zeros(n, 3, device=env.device)
     pos[:, 0] = _BOX_XY[0]
     pos[:, 1] = _BOX_XY[1]
     pos[:, 2] = _BOX_Z
+    # M3: if spawn→goal already inside tol, seed at spawn; else seed at goal.
+    if phase == "place" and place_start_holding:
+        spawn_xy = torch.tensor(_BOX_XY, device=env.device)
+        goal_xy = torch.tensor(_PLACE_GOAL_XY, device=env.device)
+        spawn_to_goal = torch.norm(spawn_xy - goal_xy)
+        if float(spawn_to_goal) >= place_tol_xy:
+            pos[:, 0] = _PLACE_GOAL_XY[0]
+            pos[:, 1] = _PLACE_GOAL_XY[1]
+        pos[:, 2] = _BOX_Z0 + lift_height
     if randomize_box:
         jitter = (torch.rand(n, 2, device=env.device) * 2.0 - 1.0) * xy_half_range
         pos[:, 0:2] += jitter
@@ -76,6 +110,42 @@ def reset_scene_and_workpiece(
     obj.write_root_velocity_to_sim(vel, env_ids=env_ids)
 
     reset_aux_buffers(env, env_ids)
+
+    if phase == "place" and place_start_holding:
+        # Close gripper + enable kinematic hold-assist (MuJoCo latch stand-in).
+        from robot_simu_rl.common.joints import GRIPPER_JOINT_LIMIT, URDF_RIGHT_GRIPPER_JOINT
+
+        grip_ids, _ = robot.find_joints([URDF_RIGHT_GRIPPER_JOINT], preserve_order=True)
+        grip_id = int(grip_ids[0])
+        grip_lo, grip_hi = GRIPPER_JOINT_LIMIT
+        closed_q = grip_lo + 0.70 * (grip_hi - grip_lo)
+        q = robot.data.joint_pos.clone()
+        q[env_ids, grip_id] = closed_q
+        # Mimic companions roughly (same magnitude, signs from URDF).
+        for name, mult in (
+            ("right_robotiq_85_right_knuckle_joint", -1.0),
+            ("right_robotiq_85_left_inner_knuckle_joint", 1.0),
+            ("right_robotiq_85_right_inner_knuckle_joint", -1.0),
+            ("right_robotiq_85_left_finger_tip_joint", -1.0),
+            ("right_robotiq_85_right_finger_tip_joint", 1.0),
+        ):
+            ids, _ = robot.find_joints([name], preserve_order=True)
+            if ids:
+                q[env_ids, int(ids[0])] = closed_q * mult
+        robot.write_joint_position_to_sim(q[env_ids], env_ids=env_ids)
+        # Seed AbsoluteGripperAction raw cmd closed if present.
+        am = getattr(env, "action_manager", None)
+        if am is not None and "gripper_action" in getattr(am, "_terms", {}):
+            term = am._terms["gripper_action"]
+            if hasattr(term, "_raw_actions"):
+                term._raw_actions[env_ids] = 0.70
+        env._place_hold_active[env_ids] = True
+        env._ever_held[env_ids] = True
+        env._lifted_once[env_ids] = True
+        env._reached_once[env_ids] = True
+        box_xy = pos[:, :2] - env.scene.env_origins[env_ids, :2]
+        goal = env._place_goal_xy.unsqueeze(0).expand(n, -1)
+        env._prev_place_dist[env_ids] = torch.norm(box_xy - goal, dim=-1)
 
 
 def _num_shapes_per_body(robot) -> list[int]:

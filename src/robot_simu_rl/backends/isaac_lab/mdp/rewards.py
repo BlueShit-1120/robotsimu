@@ -1,4 +1,4 @@
-"""Reach / Grasp rewards (MuJoCo-inspired dense shaping)."""
+"""Reach / Grasp / Place rewards (MuJoCo-inspired dense shaping)."""
 
 from __future__ import annotations
 
@@ -267,4 +267,143 @@ def grasp_reward(
     env.extras["log"]["tip_l_force"] = left_f
     env.extras["log"]["tip_r_force"] = right_f
     env.extras["log"]["hold_lift_steps"] = env._hold_lift_steps.float()
+    return r
+
+
+def _apply_place_hold_assist(
+    env: ManagerBasedRLEnv,
+    robot,
+    obj,
+    grip_norm: torch.Tensor,
+    release_grip: float = 0.35,
+) -> torch.Tensor:
+    """Kinematic hold while grip closed (MuJoCo latch / contact_hold stand-in).
+
+    Returns boolean tensor of envs still actively held this step.
+    """
+    if not hasattr(env, "_place_hold_active"):
+        env._place_hold_active = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    # Release when fingers open.
+    env._place_hold_active = env._place_hold_active & (grip_norm > release_grip)
+    held = env._place_hold_active
+    if bool(held.any()):
+        tip_mid = _tip_mid(robot, env)
+        quat = obj.data.root_quat_w.clone()
+        pose = torch.cat([tip_mid, quat], dim=-1)
+        ids = held.nonzero(as_tuple=False).squeeze(-1)
+        obj.write_root_pose_to_sim(pose[ids], env_ids=ids)
+        obj.write_root_velocity_to_sim(
+            torch.zeros(len(ids), 6, device=env.device), env_ids=ids
+        )
+    return held
+
+
+def place_reward(
+    env: ManagerBasedRLEnv,
+    place_tol_xy: float = 0.12,
+    place_tol_z: float = 0.04,
+    place_stable_steps: int = 2,
+    lift_height: float = 0.03,
+    robot_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    object_cfg: SceneEntityCfg = SceneEntityCfg("workpiece"),
+    ee_body_name: str = "right_arm_ee_link",
+    tip_l_name: str = "right_robotiq_85_left_finger_tip_link",
+    tip_r_name: str = "right_robotiq_85_right_finger_tip_link",
+) -> torch.Tensor:
+    """MuJoCo M3 place: hold/carry → release near goal and settle.
+
+    Short-train default uses ``place_start_holding`` + kinematic hold-assist so
+    C3 focuses on opening the gripper (parity with MuJoCo latch curriculum).
+    """
+    robot = env.scene[robot_cfg.name]
+    obj = env.scene[object_cfg.name]
+    _ensure_ids(env, robot, ee_body_name, tip_l_name, tip_r_name)
+
+    if not hasattr(env, "_prev_place_dist"):
+        from robot_simu_rl.backends.isaac_lab.mdp.events import reset_aux_buffers
+
+        reset_aux_buffers(env, None)
+
+    grip_cmd = _grip_cmd(env)
+    grip_lo, grip_hi = GRIPPER_JOINT_LIMIT
+    grip_q = robot.data.joint_pos[:, env._rew_grip_id]
+    grip_norm = (grip_q - grip_lo) / (grip_hi - grip_lo + 1e-9)
+
+    held = _apply_place_hold_assist(env, robot, obj, grip_norm)
+    env._ever_held |= held | (grip_norm > 0.35)
+
+    box = obj.data.root_pos_w
+    box_xy = box[:, :2] - env.scene.env_origins[:, :2]
+    goal = env._place_goal_xy.unsqueeze(0).expand(env.num_envs, -1)
+    place_xy = torch.norm(box_xy - goal, dim=-1)
+    place_progress = env._prev_place_dist - place_xy
+    # Avoid huge first-step progress spike.
+    seed = env._prev_place_dist <= 0.0
+    place_progress = torch.where(seed, torch.zeros_like(place_progress), place_progress)
+    env._prev_place_dist[:] = place_xy
+
+    if not hasattr(env, "_box_z0"):
+        env._box_z0 = torch.full((env.num_envs,), 0.75, device=env.device)
+    lift = box[:, 2] - env._box_z0
+    released = ~held
+    openish = grip_norm < 0.35
+    xy_ok = place_xy < place_tol_xy
+    z_ok = torch.abs(box[:, 2] - env._box_z0) < place_tol_z
+    acquired = env._ever_held | torch.full(
+        (env.num_envs,),
+        bool(getattr(env.cfg, "place_start_holding", True)),
+        device=env.device,
+        dtype=torch.bool,
+    )
+    step_ok = xy_ok & z_ok & released & openish & acquired
+    env._place_ok_steps = torch.where(
+        step_ok, env._place_ok_steps + 1, torch.zeros_like(env._place_ok_steps)
+    )
+    place_ok = env._place_ok_steps >= int(place_stable_steps)
+
+    r = torch.full((env.num_envs,), -0.05, device=env.device)
+    in_zone = place_xy <= place_tol_xy * 1.25
+    start_hold = torch.full(
+        (env.num_envs,),
+        bool(getattr(env.cfg, "place_start_holding", True)),
+        device=env.device,
+        dtype=torch.bool,
+    )
+    release_only = (start_hold & in_zone) | (held & (place_xy <= place_tol_xy))
+
+    # --- C3 release curriculum (M3 short-train path) ---
+    open_frac = 1.0 - grip_cmd
+    still_holding = held
+    r = r + torch.where(release_only & still_holding, 40.0 * open_frac - 35.0 * grip_cmd, 0.0)
+    r = r + torch.where(release_only & still_holding & (grip_cmd < 0.40), 15.0, 0.0)
+    r = r + torch.where(
+        release_only & released & xy_ok & z_ok, torch.full_like(r, 5.0), 0.0
+    )
+    r = r - torch.where(
+        release_only & released & ~(xy_ok & z_ok), torch.full_like(r, 5.0), 0.0
+    )
+    r = r - torch.where(
+        place_xy > place_tol_xy, 25.0 * (place_xy - place_tol_xy), torch.zeros_like(r)
+    )
+
+    # Carry shaping if still holding and outside release_only focus.
+    carry = held & ~release_only
+    r = r + torch.where(carry, -25.0 * place_xy + 60.0 * place_progress, 0.0)
+    r = r + torch.where(carry & (place_xy <= place_tol_xy), torch.full_like(r, 15.0), 0.0)
+    r = r + torch.where(carry, 2.0 * torch.clamp(lift, max=0.04).clamp(min=0.0), 0.0)
+
+    r = r + torch.where(place_ok, torch.full_like(r, 200.0), 0.0)
+    first = place_ok & ~env._placed_once
+    r = r + torch.where(first, torch.full_like(r, 300.0), 0.0)
+    env._placed_once |= place_ok
+
+    env.extras["log"] = env.extras.get("log", {})
+    env.extras["log"]["place_dist_xy"] = place_xy
+    env.extras["log"]["box_lift"] = lift
+    env.extras["log"]["box_z"] = box[:, 2]
+    env.extras["log"]["holding"] = held.float()
+    env.extras["log"]["released"] = released.float()
+    env.extras["log"]["place_success"] = place_ok.float()
+    env.extras["log"]["place_ok_steps"] = env._place_ok_steps.float()
+    env.extras["log"]["grip_norm"] = grip_norm
     return r

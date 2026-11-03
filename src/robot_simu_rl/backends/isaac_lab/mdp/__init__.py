@@ -1,4 +1,4 @@
-"""MDP terms for Isaac Lab Reach/Grasp (MuJoCo-aligned action/obs where practical)."""
+"""MDP terms for Isaac Lab Reach/Grasp/Place (MuJoCo-aligned where practical)."""
 
 from robot_simu_rl.backends.isaac_lab.mdp.actions import (
     AbsoluteGripperAction,
@@ -14,6 +14,7 @@ from robot_simu_rl.backends.isaac_lab.mdp.events import (
 from robot_simu_rl.backends.isaac_lab.mdp.observations import mujoco_style_obs
 from robot_simu_rl.backends.isaac_lab.mdp.rewards import (
     grasp_reward,
+    place_reward,
     reach_reward,
 )
 from robot_simu_rl.backends.isaac_lab.mdp.terminations import early_success, time_out
@@ -28,6 +29,7 @@ __all__ = [
     "reset_scene_and_workpiece",
     "mujoco_style_obs",
     "grasp_reward",
+    "place_reward",
     "reach_reward",
     "early_success",
     "time_out",
