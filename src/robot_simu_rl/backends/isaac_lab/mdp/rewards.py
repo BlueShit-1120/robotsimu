@@ -157,20 +157,21 @@ def grasp_reward(
 
     left_hit, right_hit = _finger_contacts(env, threshold=contact_threshold)
     pinch = left_hit & right_hit
-    # Soft holding heuristic (no contact_hold weld): pinch + closed, or tip near + closed.
+    # Soft holding (no contact_hold weld): pinch+closed OR tip-near+closed joint.
     near = dist < 0.08
     close_tip = dist < 0.05
-    holding = (pinch & (grip_norm > 0.25) & (grip_cmd > 0.35)) | (
-        close_tip & (grip_norm > 0.35) & (grip_cmd > 0.35)
-    )
+    closed = grip_norm > 0.25
+    holding = (pinch & (grip_norm > 0.20)) | (close_tip & closed)
 
     r = -0.8 * dist + 1.2 * progress - 0.05
     r = r - 0.15 * torch.clamp(dist_box - 0.25, min=0.0)
 
-    r = r + torch.where(near & ~holding, 2.5 * grip_cmd, torch.zeros_like(r))
-    r = r + torch.where(near & ~holding & (left_hit | right_hit), torch.full_like(r, 4.0), 0.0)
-    r = r + torch.where(near & ~holding & pinch, torch.full_like(r, 12.0), 0.0)
-    r = r - torch.where(~near, 0.5 * grip_cmd, torch.zeros_like(r))
+    # Strong close curriculum when tip is on the box (avoid open-finger farming).
+    r = r + torch.where(near, 6.0 * grip_cmd + 4.0 * grip_norm, torch.zeros_like(r))
+    r = r - torch.where(close_tip & ~closed, 8.0 * (1.0 - grip_cmd), torch.zeros_like(r))
+    r = r + torch.where(near & ~holding & (left_hit | right_hit), torch.full_like(r, 6.0), 0.0)
+    r = r + torch.where(near & ~holding & pinch, torch.full_like(r, 16.0), 0.0)
+    r = r - torch.where(~near, 1.0 * grip_cmd, torch.zeros_like(r))
 
     if not hasattr(env, "_box_z0"):
         env._box_z0 = torch.full((env.num_envs,), 0.75, device=env.device)

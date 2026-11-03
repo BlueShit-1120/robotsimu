@@ -137,7 +137,13 @@ class AbsoluteGripperAction(ActionTerm):
         return self._targets
 
     def process_actions(self, actions: torch.Tensor) -> None:
-        cmd = actions.view(self.num_envs, -1)[:, :1].clamp(0.0, 1.0)
+        # Prefer MuJoCo-style [0,1] cmds (see configure_sb3_action_space). Also
+        # accept symmetric [-1,1] by affine map so unbounded SB3 still explores.
+        raw = actions.view(self.num_envs, -1)[:, :1]
+        if bool((raw < 0).any()):
+            cmd = (raw.clamp(-1.0, 1.0) + 1.0) * 0.5
+        else:
+            cmd = raw.clamp(0.0, 1.0)
         if self.cfg.hold_open:
             cmd = torch.zeros_like(cmd)
         self._raw_actions[:] = cmd

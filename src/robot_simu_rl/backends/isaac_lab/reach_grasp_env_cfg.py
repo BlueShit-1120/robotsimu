@@ -65,9 +65,10 @@ def _build_scene(
                 disable_gravity=False,
             ),
             collision_props=sim_utils.CollisionPropertiesCfg(),
+            # Higher friction for no-latch contact lift (MuJoCo M4 tip μ≈3.5; proxy tips are weaker).
             physics_material=sim_utils.RigidBodyMaterialCfg(
-                static_friction=0.6,
-                dynamic_friction=0.5,
+                static_friction=2.5,
+                dynamic_friction=2.0,
                 restitution=0.0,
             ),
             visual_material=sim_utils.PreviewSurfaceCfg(diffuse_color=(0.85, 0.35, 0.15)),

@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Short Isaac Lab Grasp PPO train (SB3) on ManagerBased ReachGraspEnv.
+"""Isaac Lab Grasp PPO train (SB3) on ManagerBased ReachGraspEnv.
+
+Defaults lean on M12 control fixes (latched Δq, reward dt weight, stiff arm) and
+MuJoCo M4 no-latch contact knobs (hover=0.06, lift=0.03, delta_q_scale=0.03).
 
 Usage (conda env_isaacsim)::
 
     export OMNI_KIT_ACCEPT_EULA=YES PYTHONNOUSERSITE=1 TERM=xterm
     cd ~/IsaacLab
     ./isaaclab.sh -p /path/to/robotsimu/scripts/train_isaac_grasp.py \\
-        --headless --timesteps 8192 --num-envs 4 --out runs/isaac_grasp_m10
+        --headless --timesteps 100000 --num-envs 4 --out runs/isaac_grasp_m13 --seed 0
 """
 
 from __future__ import annotations
@@ -22,19 +25,22 @@ sys.path.insert(0, str(REPO / "src"))
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Isaac Lab Grasp PPO short train (SB3).")
-    parser.add_argument("--timesteps", type=int, default=8192)
-    parser.add_argument("--out", type=str, default="runs/isaac_grasp_m10")
+    parser = argparse.ArgumentParser(description="Isaac Lab Grasp PPO train (SB3).")
+    parser.add_argument("--timesteps", type=int, default=100_000)
+    parser.add_argument("--out", type=str, default="runs/isaac_grasp_m13")
     parser.add_argument("--num-envs", type=int, default=4)
     parser.add_argument("--hover-offset", type=float, default=0.06)
     parser.add_argument("--lift-height", type=float, default=0.03)
     parser.add_argument("--success-dist", type=float, default=0.05)
-    parser.add_argument("--delta-q-scale", type=float, default=0.05)
-    parser.add_argument("--max-episode-steps", type=int, default=200)
+    # M4 no-latch contact used 0.03; Isaac has no kinematic latch.
+    parser.add_argument("--delta-q-scale", type=float, default=0.03)
+    parser.add_argument("--max-episode-steps", type=int, default=160)
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--n-steps", type=int, default=256)
+    # Keep total PPO rollout ≈2048 like MuJoCo / M12 (n_steps * num_envs).
+    parser.add_argument("--n-steps", type=int, default=512)
     parser.add_argument("--batch-size", type=int, default=64)
     parser.add_argument("--learning-rate", type=float, default=3e-4)
+    parser.add_argument("--ent-coef", type=float, default=0.01)
     parser.add_argument("--force-urdf", action="store_true")
     parser.add_argument("--resume", type=str, default=None)
     from isaaclab.app import AppLauncher
@@ -57,6 +63,7 @@ def main() -> None:
         from isaaclab_rl.sb3 import Sb3VecEnvWrapper
         from stable_baselines3 import PPO
 
+        from robot_simu_rl.backends.isaac_lab.action_space import configure_sb3_action_space
         from robot_simu_rl.backends.isaac_lab.paths import PROXY_URDF, ROBOT_USD
         from robot_simu_rl.backends.isaac_lab.reach_grasp_env_cfg import make_reach_grasp_env_cfg
 
@@ -79,6 +86,7 @@ def main() -> None:
         cfg.seed = args.seed
 
         env = ManagerBasedRLEnv(cfg=cfg)
+        configure_sb3_action_space(env)
         vec_env = Sb3VecEnvWrapper(env)
 
         policy_device = "cuda" if str(device).startswith("cuda") and torch.cuda.is_available() else "cpu"
@@ -96,10 +104,11 @@ def main() -> None:
                 gamma=0.99,
                 gae_lambda=0.95,
                 clip_range=0.2,
-                ent_coef=0.0,
+                ent_coef=args.ent_coef,
                 device=policy_device,
                 seed=args.seed,
                 tensorboard_log=str(out / "tb"),
+                policy_kwargs={"log_std_init": -1.0},
             )
 
         t0 = time.perf_counter()
@@ -123,6 +132,7 @@ def main() -> None:
                 "max_episode_steps": args.max_episode_steps,
                 "n_steps": args.n_steps,
                 "batch_size": args.batch_size,
+                "ent_coef": args.ent_coef,
                 "seed": args.seed,
                 "sim_device": device,
                 "policy_device": policy_device,

@@ -145,9 +145,9 @@ def build_spr_robot_cfg(
             # One regex per joint — Lab forbids overlapping exprs for the same DOF.
             "right_gripper": ImplicitActuatorCfg(
                 joint_names_expr=["right_robotiq_85_.*"],
-                effort_limit_sim=50.0,
-                stiffness=200.0,
-                damping=10.0,
+                effort_limit_sim=200.0,
+                stiffness=800.0,
+                damping=40.0,
             ),
             # Lock non-trained DOFs with stiff position holds (D4).
             "locked": ImplicitActuatorCfg(
