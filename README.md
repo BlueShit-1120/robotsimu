@@ -1,4 +1,4 @@
-# robotsimu — 双平台 RL 抓放（MuJoCo M0–M5 · Isaac Lab M6–M10）
+# robotsimu — 双平台 RL 抓放（MuJoCo M0–M5 · Isaac Lab M6–M16）
 
 基于 [robotsimu](https://github.com/BlueShit-1120/robotsimu) DVT1 整机资产，在 **MuJoCo 3** 与 **Isaac Lab** 上实现右臂抓放：代理 Robotiq 夹爪 + 桌面长方体 + 冻结底盘。
 
@@ -12,6 +12,8 @@
 | Obs (Isaac/MuJoCo) | **31** 维对齐布局 |
 
 **Default branch / 默认开发分支：** `develop`（跟踪 `origin/develop`）。`main` 为稳定镜像。
+
+**Sim-to-sim：** 观测 / 奖励 / 成功 / 接触 / 控制一页对照 → [`docs/sim-to-sim-table.md`](docs/sim-to-sim-table.md)。
 
 ---
 
@@ -31,8 +33,11 @@
 | **M8** | Isaac Lab | Lab RL extras 安装 + torch/SB3 钉扎 | imports OK | `./isaaclab.sh --install all` |
 | **M9** | Isaac Lab | Reach SB3 短训闭环 | train meta ok | `train_isaac_reach.py` |
 | **M10** | Isaac Lab | Grasp SB3 短训闭环（ContactSensor） | train meta ok | `train_isaac_grasp.py` |
+| **M12** | Isaac Lab | Reach 控制重调（锁存 Δq） | ≥7/10 可比 M1 | `train_isaac_reach.py` |
+| **M14–M15** | Isaac Lab | Grasp tip 接触栈 / ContactSensor 持物 | 力可读；hold 指标 | `train_isaac_grasp.py` |
+| **M16** | Isaac Lab | Place：hold-assist + C3 释放短训 | place ≥50% | `train_isaac_place.py` / `eval_isaac_place.py` |
 
-文档：仓内 `docs/`；项目侧详细报告见 Agent Store `docs/m*.md`。
+文档：仓内 `docs/`（含 [sim-to-sim 对照表](docs/sim-to-sim-table.md)）；项目侧详细报告见 Agent Store `docs/m*.md`。
 
 ---
 
@@ -133,9 +138,16 @@ REPO=/path/to/robotsimu
 # M10 Grasp 短训（ContactSensor on）
 ./isaaclab.sh -p $REPO/scripts/train_isaac_grasp.py \
   --headless --timesteps 8192 --num-envs 4 --out runs/isaac_grasp_m10 --seed 0
+
+# M16 Place 短训（默认 place_start_holding）
+./isaaclab.sh -p $REPO/scripts/smoke_isaac_reach_grasp.py --headless --phase place --steps 40
+./isaaclab.sh -p $REPO/scripts/train_isaac_place.py \
+  --headless --timesteps 50000 --num-envs 4 --out runs/isaac_place_m16 --seed 0
+./isaaclab.sh -p $REPO/scripts/eval_isaac_place.py --headless \
+  --checkpoint runs/isaac_place_m16/ppo_isaac_place.zip --episodes 20
 ```
 
-Isaac ManagerBased 工厂：`make_reach_grasp_env_cfg(phase="reach"|"grasp", …)`  
+Isaac ManagerBased 工厂：`make_reach_grasp_env_cfg(phase="reach"|"grasp"|"place", …)`  
 （`src/robot_simu_rl/backends/isaac_lab/reach_grasp_env_cfg.py`）
 
 **本机短训参考（RTX 4070 Ti SUPER）：**
@@ -153,7 +165,7 @@ Isaac ManagerBased 工厂：`make_reach_grasp_env_cfg(phase="reach"|"grasp", …
 
 | Branch | Role |
 |--------|------|
-| **`develop`** | 日常集成（M0–M10 当前线） |
+| **`develop`** | 日常集成（M0–M16 当前线） |
 | `main` | 稳定镜像 |
 | `cursor/m5-full-pick` 等 | 历史切片分支（可选对照） |
 
@@ -171,14 +183,14 @@ assets/isaac/                   # 代理 URDF；USD 由 convert 生成（gitigno
 assets/DVT1/                    # 机体网格 / URDF 源
 src/robot_simu_rl/
   backends/mujoco/              # Gymnasium PickPlaceMujocoEnv
-  backends/isaac_lab/           # ManagerBased Reach/Grasp + MDP
+  backends/isaac_lab/           # ManagerBased Reach/Grasp/Place + MDP
   common/                       # 关节名 / 路径
 scripts/
   smoke_mujoco.py, train_*.py, eval_*.py
-  smoke_isaac_*.py, train_isaac_reach.py, train_isaac_grasp.py
+  smoke_isaac_*.py, train_isaac_{reach,grasp,place}.py, eval_isaac_*.py
   convert_robot_usd.py, make_proxy_urdf.py
 configs/                        # PPO / task YAML
-docs/                           # M0–M10 切片说明
+docs/                           # 切片说明 + sim-to-sim-table.md
 runs/                           # 本地训练产物（gitignore）
 ```
 
@@ -186,13 +198,13 @@ runs/                           # 本地训练产物（gitignore）
 
 ## Notes / 注意
 
-- Isaac **无** MuJoCo latch / `contact_hold`；Grasp 仅 PhysX 摩擦 + ContactSensor。  
+- Isaac Grasp **无** MuJoCo latch / `contact_hold`（仅 PhysX 摩擦 + ContactSensor）；Place 短训用 kinematic **hold-assist** 作 latch 替身。详见 [`docs/sim-to-sim-table.md`](docs/sim-to-sim-table.md)。  
 - Kit `simulation_app.close()` 偶发挂起；训练脚本以 `SystemExit` 强制收尾。  
 - 重跑 `./isaaclab.sh --install all` 可能抬升 torch；按 `docs/m8-isaac-rl-extras.md` 钉回。  
-- 下一刀候选：加长 Isaac Reach/Grasp、`eval_isaac_*.py`、Place / full-pick on Lab。
+- 下一刀候选：Isaac full-pick（Grasp→Place）、Grasp 稳态终态抬升、收紧 Place tol。
 
 ---
 
 ## License / 归属
 
-机体网格与 URDF/MJCF 位于本仓 `assets/DVT1/`；M0–M10 补丁与 RL 脚手架一并合入本仓。
+机体网格与 URDF/MJCF 位于本仓 `assets/DVT1/`；M0–M16 补丁与 RL 脚手架一并合入本仓。
