@@ -98,35 +98,54 @@ def main() -> None:
                 shape_mu.append(mats0[start:end].tolist())
             result["tip_shape_materials"] = shape_mu
 
-        # Oracle: hold tip-mid near box, close grip, then lift joint2 a bit.
+        # Oracle: close grip then lift; log tip forces / holding / pinch.
         obs, _ = env.reset()
         box = env.scene["workpiece"]
         z0 = float(box.data.root_pos_w[0, 2].item())
         act_dim = env.action_space.shape[-1]
-        # action: 7 arm Δq + 1 grip
         close = torch.zeros(args.num_envs, act_dim, device=env.device)
-        close[:, -1] = 1.0  # close gripper
+        close[:, -1] = 1.0
         max_box_z = z0
         left_hits = 0
         right_hits = 0
-        for _ in range(int(args.steps_close)):
-            obs, rew, term, trunc, info = env.step(close)
-            max_box_z = max(max_box_z, float(box.data.root_pos_w[0, 2].item()))
-            log = info.get("log", {}) if isinstance(info, dict) else {}
-            # ManagerBased may put extras on env
+        hold_steps = 0
+        pinch_steps = 0
+        peak_fl = 0.0
+        peak_fr = 0.0
+        peak_hold_lift = 0
+
+        def _consume_log():
+            nonlocal left_hits, right_hits, hold_steps, pinch_steps, peak_fl, peak_fr, peak_hold_lift
             extras = getattr(env, "extras", {}).get("log", {})
             if "tip_l_contact" in extras:
                 left_hits += int(float(extras["tip_l_contact"].float().mean().item()) > 0.5)
             if "tip_r_contact" in extras:
                 right_hits += int(float(extras["tip_r_contact"].float().mean().item()) > 0.5)
+            if "holding" in extras:
+                hold_steps += int(float(extras["holding"].float().mean().item()) > 0.5)
+            if "pinch" in extras:
+                pinch_steps += int(float(extras["pinch"].float().mean().item()) > 0.5)
+            if "tip_l_force" in extras:
+                peak_fl = max(peak_fl, float(extras["tip_l_force"].float().amax().item()))
+            if "tip_r_force" in extras:
+                peak_fr = max(peak_fr, float(extras["tip_r_force"].float().amax().item()))
+            if "hold_lift_steps" in extras:
+                peak_hold_lift = max(
+                    peak_hold_lift, int(float(extras["hold_lift_steps"].float().amax().item()))
+                )
+
+        for _ in range(int(args.steps_close)):
+            env.step(close)
+            max_box_z = max(max_box_z, float(box.data.root_pos_w[0, 2].item()))
+            _consume_log()
 
         lift = close.clone()
-        # nudge shoulder/elbow upward (joint2 index 1 often raises tip for this arm)
         lift[:, 1] = -0.4
         lift[:, -1] = 1.0
         for _ in range(int(args.steps_lift)):
             env.step(lift)
             max_box_z = max(max_box_z, float(box.data.root_pos_w[0, 2].item()))
+            _consume_log()
 
         z1 = float(box.data.root_pos_w[0, 2].item())
         result["box_z0"] = z0
@@ -136,6 +155,11 @@ def main() -> None:
         result["lift_final"] = z1 - z0
         result["close_left_hit_steps"] = left_hits
         result["close_right_hit_steps"] = right_hits
+        result["holding_steps"] = hold_steps
+        result["pinch_steps"] = pinch_steps
+        result["peak_tip_l_force"] = peak_fl
+        result["peak_tip_r_force"] = peak_fr
+        result["peak_hold_lift_steps"] = peak_hold_lift
         result["ok"] = True
         print(json.dumps(result, indent=2, default=str))
         if args.out:

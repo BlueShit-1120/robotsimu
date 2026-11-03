@@ -143,9 +143,12 @@ def main() -> None:
         pinches: list[bool] = []
         returns: list[float] = []
         ep_ret = np.zeros(args.num_envs, dtype=np.float64)
-        # Track best lift / success within episode (pre-reset).
+        # Track peak + sustained success; terminal metrics are the hold gate.
         ep_success = np.zeros(args.num_envs, dtype=bool)
         ep_best_lift = np.full(args.num_envs, -np.inf, dtype=np.float64)
+        ep_any_hold = np.zeros(args.num_envs, dtype=bool)
+        ep_any_pinch = np.zeros(args.num_envs, dtype=bool)
+        ep_peak_tip_force = np.zeros(args.num_envs, dtype=np.float64)
         ep_last = {
             "box_z": np.full(args.num_envs, np.nan),
             "lift": np.full(args.num_envs, np.nan),
@@ -173,8 +176,9 @@ def main() -> None:
             holding = _as_np(log.get("holding"))
             pinch = _as_np(log.get("pinch"))
             box_z = _as_np(log.get("box_z"))
+            tip_lf = _as_np(log.get("tip_l_force"))
+            tip_rf = _as_np(log.get("tip_r_force"))
             if box_z is None and lift is not None:
-                # Reconstruct from lift + table approx if log lacked box_z.
                 z0 = getattr(unwrapped, "_box_z0", None)
                 if z0 is not None:
                     box_z = _as_np(z0) + lift
@@ -189,9 +193,19 @@ def main() -> None:
             if dist is not None:
                 ep_last["dist"] = dist.astype(np.float64).reshape(-1)
             if holding is not None:
-                ep_last["holding"] = holding.astype(bool).reshape(-1)
+                h = holding.astype(bool).reshape(-1)
+                ep_last["holding"] = h
+                ep_any_hold |= h
             if pinch is not None:
-                ep_last["pinch"] = pinch.astype(bool).reshape(-1)
+                p = pinch.astype(bool).reshape(-1)
+                ep_last["pinch"] = p
+                ep_any_pinch |= p
+            if tip_lf is not None and tip_rf is not None:
+                peak_f = np.maximum(
+                    tip_lf.astype(np.float64).reshape(-1),
+                    tip_rf.astype(np.float64).reshape(-1),
+                )
+                ep_peak_tip_force = np.maximum(ep_peak_tip_force, peak_f)
             if box_z is not None:
                 ep_last["box_z"] = box_z.astype(np.float64).reshape(-1)
 
@@ -199,26 +213,42 @@ def main() -> None:
             for i in done_ids:
                 if len(successes) >= args.episodes:
                     break
-                ok = bool(ep_success[i] or (ep_best_lift[i] > args.lift_height and ep_last["holding"][i]))
+                term_z = float(ep_last["box_z"][i]) if np.isfinite(ep_last["box_z"][i]) else float("nan")
+                term_hold = bool(ep_last["holding"][i])
+                term_pinch = bool(ep_last["pinch"][i])
+                # Steady-hold success: sustained grasp_ok during ep, OR terminal
+                # box still elevated while holding (not peak bounce alone).
+                z0 = 0.75
+                term_elevated = np.isfinite(term_z) and (term_z > z0 + args.lift_height)
+                ok = bool(ep_success[i] or (term_elevated and term_hold))
                 successes.append(ok)
-                box_zs.append(float(ep_last["box_z"][i]) if np.isfinite(ep_last["box_z"][i]) else float("nan"))
+                box_zs.append(term_z)
                 lifts.append(float(ep_best_lift[i]) if np.isfinite(ep_best_lift[i]) else float("nan"))
                 tip_dists.append(float(ep_last["dist"][i]) if np.isfinite(ep_last["dist"][i]) else float("nan"))
-                holdings.append(bool(ep_last["holding"][i]))
-                pinches.append(bool(ep_last["pinch"][i]))
+                holdings.append(term_hold)
+                pinches.append(term_pinch)
                 returns.append(float(ep_ret[i]))
                 print(
                     f"  ep={len(successes) - 1:02d} env={int(i)} success={ok} "
-                    f"box_z={box_zs[-1]:.3f} lift={lifts[-1]:.3f} "
+                    f"box_z={box_zs[-1]:.3f} peak_lift={lifts[-1]:.3f} "
                     f"tip_dist={tip_dists[-1]:.3f} hold={holdings[-1]} pinch={pinches[-1]} "
+                    f"any_hold={bool(ep_any_hold[i])} peak_F={ep_peak_tip_force[i]:.3f} "
                     f"ret={ep_ret[i]:.2f}"
                 )
                 ep_ret[i] = 0.0
                 ep_success[i] = False
                 ep_best_lift[i] = -np.inf
+                ep_any_hold[i] = False
+                ep_any_pinch[i] = False
+                ep_peak_tip_force[i] = 0.0
 
         n = len(successes)
         rate = float(sum(successes) / max(n, 1))
+        term_hold_rate = float(sum(holdings) / max(n, 1))
+        term_pinch_rate = float(sum(pinches) / max(n, 1))
+        elevated_n = sum(
+            1 for z in box_zs if np.isfinite(z) and z > 0.75 + args.lift_height
+        )
         summary.update(
             {
                 "ok": n >= args.episodes,
@@ -227,6 +257,10 @@ def main() -> None:
                 "episodes_requested": args.episodes,
                 "successes": int(sum(successes)),
                 "success_rate": rate,
+                "terminal_holding_rate": term_hold_rate,
+                "terminal_pinch_rate": term_pinch_rate,
+                "terminal_elevated_rate": float(elevated_n / max(n, 1)),
+                "success_criterion": "sustained grasp_ok (hold_steps) OR terminal elevated+holding",
                 "mean_box_z": float(np.nanmean(box_zs)) if box_zs else float("nan"),
                 "mean_lift": float(np.nanmean(lifts)) if lifts else float("nan"),
                 "mean_tip_box_dist": float(np.nanmean(tip_dists)) if tip_dists else float("nan"),
@@ -260,7 +294,9 @@ def main() -> None:
         print(
             f"[eval_isaac_grasp] {summary['successes']}/{n} "
             f"rate={rate:.2f} mean_box_z={summary['mean_box_z']:.3f} "
-            f"mean_lift={summary['mean_lift']:.3f} mean_tip={summary['mean_tip_box_dist']:.3f}"
+            f"mean_lift={summary['mean_lift']:.3f} mean_tip={summary['mean_tip_box_dist']:.3f} "
+            f"hold={term_hold_rate:.2f} pinch={term_pinch_rate:.2f} "
+            f"elevated={summary['terminal_elevated_rate']:.2f}"
         )
         print(f"[eval_isaac_grasp] wrote {out}")
         vec_env.close()

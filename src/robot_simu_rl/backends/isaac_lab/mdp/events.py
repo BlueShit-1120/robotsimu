@@ -35,10 +35,14 @@ def reset_aux_buffers(
         env._prev_task_dist = torch.zeros(n, device=env.device)
         env._reached_once = torch.zeros(n, dtype=torch.bool, device=env.device)
         env._lifted_once = torch.zeros(n, dtype=torch.bool, device=env.device)
+        env._hold_lift_steps = torch.zeros(n, dtype=torch.long, device=env.device)
         env._box_z0 = torch.full((n,), _BOX_Z0, device=env.device)
+    if not hasattr(env, "_hold_lift_steps"):
+        env._hold_lift_steps = torch.zeros(n, dtype=torch.long, device=env.device)
     env._prev_task_dist[env_ids] = 0.0
     env._reached_once[env_ids] = False
     env._lifted_once[env_ids] = False
+    env._hold_lift_steps[env_ids] = 0
     env._box_z0[env_ids] = _BOX_Z0
 
 

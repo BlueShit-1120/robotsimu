@@ -57,6 +57,8 @@ def _build_scene(
         init_state=RigidObjectCfg.InitialStateCfg(pos=[0.70, -0.20, 0.765], rot=[1, 0, 0, 0]),
         spawn=sim_utils.CuboidCfg(
             size=(0.05, 0.04, 0.03),
+            # Required for tip ContactSensor force_matrix vs Workpiece (else forces stay 0).
+            activate_contact_sensors=True,
             mass_props=sim_utils.MassPropertiesCfg(mass=0.15),
             rigid_props=sim_utils.RigidBodyPropertiesCfg(
                 solver_position_iteration_count=16,
@@ -90,16 +92,21 @@ def _build_scene(
     tip_l = None
     tip_r = None
     if enable_contact:
+        # force_threshold only gates air-time tracking; reward uses its own N-threshold.
         tip_l = ContactSensorCfg(
             prim_path="{ENV_REGEX_NS}/Robot/right_robotiq_85_left_finger_tip_link",
             update_period=0.0,
-            history_length=2,
+            history_length=3,
+            track_air_time=True,
+            force_threshold=0.05,
             filter_prim_paths_expr=["{ENV_REGEX_NS}/Workpiece"],
         )
         tip_r = ContactSensorCfg(
             prim_path="{ENV_REGEX_NS}/Robot/right_robotiq_85_right_finger_tip_link",
             update_period=0.0,
-            history_length=2,
+            history_length=3,
+            track_air_time=True,
+            force_threshold=0.05,
             filter_prim_paths_expr=["{ENV_REGEX_NS}/Workpiece"],
         )
 
@@ -158,7 +165,11 @@ class RewardsReachCfg:
 
 @configclass
 class RewardsGraspCfg:
-    grasp = RewTerm(func=mdp.grasp_reward, weight=1.0, params={"lift_height": 0.03})
+    grasp = RewTerm(
+        func=mdp.grasp_reward,
+        weight=1.0,
+        params={"lift_height": 0.03, "contact_threshold": 0.05, "hold_steps": 15},
+    )
 
 
 @configclass
