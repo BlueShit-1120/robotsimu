@@ -1,4 +1,4 @@
-"""ManagerBasedRLEnvCfg: Reach / Grasp phases with MuJoCo-aligned 8-DoF interface."""
+"""ManagerBasedRLEnvCfg: Reach / Grasp / Place with MuJoCo-aligned 8-DoF interface."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from robot_simu_rl.backends.isaac_lab.mdp.actions import DEFAULT_ARM_JOINT_NAMES
 from robot_simu_rl.backends.isaac_lab.robot_cfg import build_spr_robot_cfg
 from robot_simu_rl.common.joints import URDF_RIGHT_ARM_JOINTS
 
-Phase = Literal["reach", "grasp"]
+Phase = Literal["reach", "grasp", "place"]
 
 
 def _build_scene(
@@ -173,6 +173,20 @@ class RewardsGraspCfg:
 
 
 @configclass
+class RewardsPlaceCfg:
+    place = RewTerm(
+        func=mdp.place_reward,
+        weight=1.0,
+        params={
+            "place_tol_xy": 0.12,
+            "place_tol_z": 0.04,
+            "place_stable_steps": 2,
+            "lift_height": 0.03,
+        },
+    )
+
+
+@configclass
 class TerminationsCfg:
     time_out = DoneTerm(func=mdp.time_out, time_out=True)
     success = DoneTerm(func=mdp.early_success)
@@ -180,11 +194,12 @@ class TerminationsCfg:
 
 @configclass
 class ReachGraspEnvCfg(ManagerBasedRLEnvCfg):
-    """Right-arm Reach/Grasp ManagerBased env (frozen base, 8-DoF Δq+grip).
+    """Right-arm Reach/Grasp/Place ManagerBased env (frozen base, 8-DoF Δq+grip).
 
     Extra fields (not part of upstream Lab cfg schema but read by MDP terms):
-    - ``phase``: ``\"reach\"`` | ``\"grasp\"``
+    - ``phase``: ``\"reach\"`` | ``\"grasp\"`` | ``\"place\"``
     - ``delta_q_scale``, ``hover_offset``, ``success_dist``, ``lift_height``
+    - ``place_tol_xy``, ``place_tol_z``, ``place_stable_steps``, ``place_start_holding``
     """
 
     phase: Phase = "reach"
@@ -192,6 +207,10 @@ class ReachGraspEnvCfg(ManagerBasedRLEnvCfg):
     hover_offset: float = 0.30
     success_dist: float = 0.05
     lift_height: float = 0.03
+    place_tol_xy: float = 0.12
+    place_tol_z: float = 0.04
+    place_stable_steps: int = 2
+    place_start_holding: bool = True
     prefer_usd: bool = True
     enable_contact: bool = True
     early_terminate_success: bool = True
@@ -223,13 +242,16 @@ class ReachGraspEnvCfg(ManagerBasedRLEnvCfg):
         self.viewer.eye = (1.8, -1.2, 1.4)
         self.viewer.lookat = (0.5, -0.1, 0.8)
 
-        # Reach uses MuJoCo M1 near-home; Grasp keeps M4 grasp-home.
+        # Reach uses MuJoCo M1 near-home; Grasp/Place keep M4 grasp-home.
         arm_home = "near" if self.phase == "reach" else "grasp"
+        use_contact = bool(
+            self.enable_contact and self.phase in ("grasp", "place")
+        )
         self.scene = _build_scene(
             num_envs=int(self.num_envs),
             env_spacing=float(self.env_spacing),
             prefer_usd=self.prefer_usd,
-            enable_contact=bool(self.enable_contact and self.phase == "grasp"),
+            enable_contact=use_contact,
             arm_home=arm_home,
         )
 
@@ -247,6 +269,13 @@ class ReachGraspEnvCfg(ManagerBasedRLEnvCfg):
             self.rewards = RewardsGraspCfg()
             self.rewards.grasp.params["lift_height"] = self.lift_height
             self.rewards.grasp.weight = reward_dt_scale
+        elif self.phase == "place":
+            self.rewards = RewardsPlaceCfg()
+            self.rewards.place.params["lift_height"] = self.lift_height
+            self.rewards.place.params["place_tol_xy"] = self.place_tol_xy
+            self.rewards.place.params["place_tol_z"] = self.place_tol_z
+            self.rewards.place.params["place_stable_steps"] = int(self.place_stable_steps)
+            self.rewards.place.weight = reward_dt_scale
         else:
             self.rewards = RewardsReachCfg()
             self.rewards.reach.params["hover_offset"] = self.hover_offset
@@ -266,6 +295,10 @@ def make_reach_grasp_env_cfg(
     hover_offset: float = 0.30,
     success_dist: float = 0.05,
     lift_height: float = 0.03,
+    place_tol_xy: float = 0.12,
+    place_tol_z: float = 0.04,
+    place_stable_steps: int = 2,
+    place_start_holding: bool = True,
     enable_contact: bool = True,
     early_terminate_success: bool = False,
     max_episode_steps: int | None = None,
@@ -279,6 +312,10 @@ def make_reach_grasp_env_cfg(
         hover_offset=hover_offset,
         success_dist=success_dist,
         lift_height=lift_height,
+        place_tol_xy=place_tol_xy,
+        place_tol_z=place_tol_z,
+        place_stable_steps=place_stable_steps,
+        place_start_holding=place_start_holding,
         enable_contact=enable_contact,
         early_terminate_success=early_terminate_success,
     )

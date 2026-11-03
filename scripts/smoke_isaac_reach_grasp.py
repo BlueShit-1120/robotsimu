@@ -25,7 +25,7 @@ sys.path.insert(0, str(REPO / "src"))
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Isaac Lab Reach/Grasp ManagerBased smoke.")
-    parser.add_argument("--phase", choices=("reach", "grasp"), default="reach")
+    parser.add_argument("--phase", choices=("reach", "grasp", "place"), default="reach")
     parser.add_argument("--steps", type=int, default=30)
     parser.add_argument("--num-envs", type=int, default=1)
     parser.add_argument("--delta-q-scale", type=float, default=0.05)

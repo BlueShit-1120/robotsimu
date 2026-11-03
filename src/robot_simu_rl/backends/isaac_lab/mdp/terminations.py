@@ -14,11 +14,13 @@ from isaaclab.envs.mdp import time_out  # noqa: F401
 
 
 def early_success(env: ManagerBasedRLEnv) -> torch.Tensor:
-    """Terminate when reach/grasp success flag was set this step (extras log)."""
+    """Terminate when reach/grasp/place success flag was set this step (extras log)."""
     log = env.extras.get("log", {})
     phase = getattr(env.cfg, "phase", "reach")
     if phase == "grasp":
         flag = log.get("grasp_success")
+    elif phase == "place":
+        flag = log.get("place_success")
     else:
         flag = log.get("reach_success")
     if flag is None:
