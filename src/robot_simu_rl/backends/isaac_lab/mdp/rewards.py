@@ -155,7 +155,8 @@ def grasp_reward(
     grip_q = robot.data.joint_pos[:, env._rew_grip_id]
     grip_norm = (grip_q - grip_lo) / (grip_hi - grip_lo + 1e-9)
 
-    left_hit, right_hit = _finger_contacts(env, threshold=contact_threshold)
+    # ContactSensor forces on proxy spheres are often <<1 N; keep threshold low.
+    left_hit, right_hit = _finger_contacts(env, threshold=min(contact_threshold, 0.05))
     pinch = left_hit & right_hit
     # Soft holding (no contact_hold weld): pinch+closed OR tip-near+closed joint.
     near = dist < 0.08
@@ -167,8 +168,10 @@ def grasp_reward(
     r = r - 0.15 * torch.clamp(dist_box - 0.25, min=0.0)
 
     # Strong close curriculum when tip is on the box (avoid open-finger farming).
-    r = r + torch.where(near, 6.0 * grip_cmd + 4.0 * grip_norm, torch.zeros_like(r))
-    r = r - torch.where(close_tip & ~closed, 8.0 * (1.0 - grip_cmd), torch.zeros_like(r))
+    r = r + torch.where(near, 8.0 * grip_cmd + 6.0 * grip_norm, torch.zeros_like(r))
+    r = r - torch.where(close_tip & ~closed, 12.0 * (1.0 - grip_cmd), torch.zeros_like(r))
+    # Keep closed while tip stays on the box (M13 failure mode: bump then reopen).
+    r = r + torch.where(close_tip & closed, 10.0 * grip_norm, torch.zeros_like(r))
     r = r + torch.where(near & ~holding & (left_hit | right_hit), torch.full_like(r, 6.0), 0.0)
     r = r + torch.where(near & ~holding & pinch, torch.full_like(r, 16.0), 0.0)
     r = r - torch.where(~near, 1.0 * grip_cmd, torch.zeros_like(r))
@@ -182,6 +185,12 @@ def grasp_reward(
     env._reached_once |= holding
     r = r + torch.where(
         holding, 60.0 * torch.clamp(lift, max=lift_height + 0.06).clamp(min=0.0), 0.0
+    )
+    # Extra: reward upward motion while tip-near+closed even if sensors miss.
+    r = r + torch.where(
+        close_tip & closed,
+        40.0 * torch.clamp(lift, max=lift_height + 0.08).clamp(min=0.0),
+        0.0,
     )
     r = r + torch.where(
         holding, 8.0 * torch.clamp(ee[:, 2] - (env._box_z0 + 0.05), min=0.0), 0.0
