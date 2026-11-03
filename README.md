@@ -41,11 +41,14 @@
 
 ---
 
-## Environments / 环境
+## Environments / 环境激活
 
-### MuJoCo（`rs-mujoco` 或 venv）
+在仓库根目录操作（下文记为 `REPO`，本机常见路径：`/home/xiaowen/Desktop/spider-robot-sim/src/robotsimu`）。
+
+### MuJoCo
 
 ```bash
+cd /path/to/robotsimu
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements-mujoco.txt
 pip install -e .
@@ -54,54 +57,88 @@ pip install -e .
 
 ### Isaac Lab（conda `env_isaacsim`）
 
-见钉扎：Isaac Sim **4.5** · Lab **v2.1.1**（`~/IsaacLab`）· torch **2.7.0+cu128** · SB3 **2.7.1**。
+钉扎：Isaac Sim **4.5** · Lab **v2.1.1**（`~/IsaacLab`）· torch **2.7.0+cu128** · SB3 **2.7.1**。
+
+**每次跑 Isaac 脚本前必做：**
 
 ```bash
 source ~/miniconda3/etc/profile.d/conda.sh
 conda activate env_isaacsim
-export OMNI_KIT_ACCEPT_EULA=YES PYTHONNOUSERSITE=1 TERM=xterm
-# 首次 / 重装 RL extras：
-cd ~/IsaacLab && ./isaaclab.sh --install all
-# 若 torch 被抬升，钉回 2.7.0+cu128 + SB3<2.8（见 docs/m8-isaac-rl-extras.md）
+export OMNI_KIT_ACCEPT_EULA=YES PYTHONNOUSERSITE=1 TERM=xterm PYTHONUNBUFFERED=1
+cd ~/IsaacLab
+REPO=/path/to/robotsimu   # 换成你的 robotsimu 根目录
 ```
+
+首次 / 重装 RL extras：`./isaaclab.sh --install all`（若 torch 被抬升，钉回 2.7.0+cu128 + SB3&lt;2.8，见 `docs/m8-isaac-rl-extras.md`）。
+
+所有 Isaac 命令经 `./isaaclab.sh -p … --headless` 启动；相对 `--out` / `--checkpoint` 会落到 `$REPO/runs/…`（`runs/` gitignore，仅本地）。
 
 ---
 
-## Quick start — MuJoCo
+## 本地命令速查 — MuJoCo
+
+在已激活的 MuJoCo 环境中、于 `REPO` 根目录执行。
+
+### 冒烟
 
 ```bash
-# 冒烟
 python scripts/smoke_mujoco.py --steps 100 --seed 0
+```
 
-# M1 Reach
+### Reach（M1）
+
+```bash
 python scripts/train_reach.py --timesteps 100000 --out runs/reach_m1 \
-  --hover-offset 0.30 --success-dist 0.05 --delta-q-scale 0.06 --device cpu
-python scripts/eval_reach.py --checkpoint runs/reach_m1/ppo_reach.zip --episodes 10
+  --hover-offset 0.30 --success-dist 0.05 --delta-q-scale 0.06 --device cpu --seed 0
+# checkpoint: runs/reach_m1/ppo_reach.zip
 
-# M2 Grasp（可 --resume Reach ckpt）
+python scripts/eval_reach.py --checkpoint runs/reach_m1/ppo_reach.zip \
+  --episodes 10 --hover-offset 0.30 --success-dist 0.05 --delta-q-scale 0.06 \
+  --out runs/reach_m1/eval_summary.json
+```
+
+### Grasp（M2 latch / M4 无 latch）
+
+```bash
+# M2：默认 latch；可 --resume runs/reach_m1/ppo_reach.zip
 python scripts/train_grasp.py --timesteps 200000 --out runs/grasp_m2 \
-  --hover-offset 0.06 --lift-height 0.04 --device cpu
-python scripts/eval_grasp.py --checkpoint runs/grasp_m2/ppo_grasp.zip --episodes 100
+  --hover-offset 0.06 --lift-height 0.03 --device cpu --seed 0
+# checkpoint: runs/grasp_m2/ppo_grasp.zip
 
-# M3 Place（默认已持物起步）
-python scripts/train_place.py --timesteps 100000 --out runs/place_m3 --device cpu
-python scripts/eval_place.py --checkpoint runs/place_m3/ppo_place.zip --episodes 100
+python scripts/eval_grasp.py --checkpoint runs/grasp_m2/ppo_grasp.zip \
+  --episodes 100 --hover-offset 0.06 --lift-height 0.03 \
+  --out runs/grasp_m2/eval_summary.json
 
-# M4 无 latch 接触抓取
+# M4：无 latch 接触抓取
 python scripts/train_grasp.py --timesteps 500000 --out runs/grasp_m4 --no-latch \
   --lift-height 0.03 --delta-q-scale 0.03 --device cpu --seed 17
 python scripts/eval_grasp.py --checkpoint runs/grasp_m4/ppo_grasp.zip \
-  --episodes 100 --no-latch --lift-height 0.03 --delta-q-scale 0.03
+  --episodes 100 --no-latch --lift-height 0.03 --delta-q-scale 0.03 \
+  --out runs/grasp_m4/eval_summary.json
+```
 
-# M5 full-pick（contact_hold + grasp bootstrap；详见 docs/m5-full-pick.md）
+### Place（M3 短训 / M5 full-pick）
+
+```bash
+# M3：默认已持物起步（非 --full-pick）；示例对齐 docs/m3-place.md
+python scripts/train_place.py --timesteps 100000 --out runs/place_m3 \
+  --place-tol-xy 0.12 --place-tol-z 0.04 --place-stable-steps 2 --device cpu --seed 0
+# checkpoint: runs/place_m3/ppo_place.zip
+
+python scripts/eval_place.py --checkpoint runs/place_m3/ppo_place.zip \
+  --episodes 100 --place-tol-xy 0.12 --place-tol-z 0.04 --place-stable-steps 2 \
+  --out runs/place_m3/eval_summary.json
+
+# M5：full-pick + contact_hold（详见 docs/m5-full-pick.md）
 python scripts/train_place.py --full-pick --no-latch --contact-hold \
   --bootstrap-grasp runs/grasp_m4/ppo_grasp.zip \
   --timesteps 150000 --out runs/place_m5 --device cpu
 python scripts/eval_place.py --checkpoint runs/place_m5/ppo_place.zip \
-  --full-pick --no-latch --contact-hold --episodes 100 --stochastic
+  --full-pick --no-latch --contact-hold --episodes 100 --stochastic \
+  --out runs/place_m5/eval_summary.json
 ```
 
-### Code entry / 代码入口
+### 代码入口
 
 ```python
 from robot_simu_rl.backends.mujoco import PickPlaceMujocoEnv
@@ -114,50 +151,75 @@ obs, reward, terminated, truncated, info = env.step(env.action_space.sample())
 
 ---
 
-## Quick start — Isaac Lab
+## 本地命令速查 — Isaac Lab
 
-路径请换成你的 robotsimu 根目录。所有 Isaac 脚本经 `~/IsaacLab/isaaclab.sh -p` 启动。
+先完成上文 **Isaac 环境激活**（`env_isaacsim` + `OMNI_KIT_ACCEPT_EULA` + `PYTHONNOUSERSITE=1`），在 `~/IsaacLab` 下执行。工厂：`make_reach_grasp_env_cfg(phase="reach"|"grasp"|"place", …)`。
+
+### 冒烟（Reach / Grasp / Place）
 
 ```bash
-conda activate env_isaacsim
-export OMNI_KIT_ACCEPT_EULA=YES PYTHONNOUSERSITE=1 TERM=xterm
-cd ~/IsaacLab
-REPO=/path/to/robotsimu
-
-# M6 场景冒烟
 ./isaaclab.sh -p $REPO/scripts/smoke_isaac_lab.py --headless
 
-# M7 Reach / Grasp env 冒烟
-./isaaclab.sh -p $REPO/scripts/smoke_isaac_reach_grasp.py --headless --phase reach --steps 20
-./isaaclab.sh -p $REPO/scripts/smoke_isaac_reach_grasp.py --headless --phase grasp --steps 40 --random-policy
-
-# M9 Reach 短训（闭环冒烟量级）
-./isaaclab.sh -p $REPO/scripts/train_isaac_reach.py \
-  --headless --timesteps 8192 --num-envs 4 --out runs/isaac_reach_m9 --seed 0
-
-# M10 Grasp 短训（ContactSensor on）
-./isaaclab.sh -p $REPO/scripts/train_isaac_grasp.py \
-  --headless --timesteps 8192 --num-envs 4 --out runs/isaac_grasp_m10 --seed 0
-
-# M16 Place 短训（默认 place_start_holding）
-./isaaclab.sh -p $REPO/scripts/smoke_isaac_reach_grasp.py --headless --phase place --steps 40
-./isaaclab.sh -p $REPO/scripts/train_isaac_place.py \
-  --headless --timesteps 50000 --num-envs 4 --out runs/isaac_place_m16 --seed 0
-./isaaclab.sh -p $REPO/scripts/eval_isaac_place.py --headless \
-  --checkpoint runs/isaac_place_m16/ppo_isaac_place.zip --episodes 20
+./isaaclab.sh -p $REPO/scripts/smoke_isaac_reach_grasp.py --headless \
+  --phase reach --steps 20
+./isaaclab.sh -p $REPO/scripts/smoke_isaac_reach_grasp.py --headless \
+  --phase grasp --steps 40 --random-policy
+./isaaclab.sh -p $REPO/scripts/smoke_isaac_reach_grasp.py --headless \
+  --phase place --steps 40
 ```
 
-Isaac ManagerBased 工厂：`make_reach_grasp_env_cfg(phase="reach"|"grasp"|"place", …)`  
-（`src/robot_simu_rl/backends/isaac_lab/reach_grasp_env_cfg.py`）
+### Reach（M12 推荐）
 
-**本机短训参考（RTX 4070 Ti SUPER）：**
+```bash
+./isaaclab.sh -p $REPO/scripts/train_isaac_reach.py --headless \
+  --timesteps 200000 --num-envs 4 --out runs/isaac_reach_m12 --seed 0 \
+  --delta-q-scale 0.06 --n-steps 512 --hover-offset 0.30 --success-dist 0.05
+# checkpoint: $REPO/runs/isaac_reach_m12/ppo_isaac_reach.zip
 
-| Run | steps × envs | learn 墙钟 | FPS | ep_rew 趋势 |
-|-----|--------------|------------|-----|-------------|
-| M9 Reach | 8192 × 4 | ~28 s | ~293 | ≈ −1.0（未收敛） |
-| M10 Grasp | 8192 × 4 | ~31 s | ~262 | 2.5 → 4.08 |
+./isaaclab.sh -p $REPO/scripts/eval_isaac_reach.py --headless \
+  --checkpoint runs/isaac_reach_m12/ppo_isaac_reach.zip \
+  --episodes 10 --num-envs 1 --delta-q-scale 0.06 \
+  --hover-offset 0.30 --success-dist 0.05 --seed 0 \
+  --out runs/isaac_reach_m12/eval_summary.json
+```
 
-`runs/` 默认 gitignore；checkpoint / `train_meta.json` 仅存本地。
+### Grasp（M14/M15 接触栈）
+
+```bash
+./isaaclab.sh -p $REPO/scripts/train_isaac_grasp.py --headless \
+  --timesteps 200000 --num-envs 4 --out runs/isaac_grasp_m15 --seed 2 \
+  --ent-coef 0.03 --delta-q-scale 0.03 --hover-offset 0.06 \
+  --lift-height 0.03 --max-episode-steps 160
+# 可选续训：--resume runs/isaac_grasp_m14b/ppo_isaac_grasp.zip
+# checkpoint: $REPO/runs/isaac_grasp_m15/ppo_isaac_grasp.zip
+
+./isaaclab.sh -p $REPO/scripts/eval_isaac_grasp.py --headless \
+  --checkpoint runs/isaac_grasp_m15/ppo_isaac_grasp.zip \
+  --episodes 20 --num-envs 1 --delta-q-scale 0.03 \
+  --hover-offset 0.06 --lift-height 0.03 --max-episode-steps 160 \
+  --out runs/isaac_grasp_m15/eval_summary.json
+```
+
+### Place（M16 C3 释放短训）
+
+默认 `place_start_holding`（闭爪 + hold-assist）；可用 `--no-place-start-holding` 关掉。
+
+```bash
+./isaaclab.sh -p $REPO/scripts/train_isaac_place.py --headless \
+  --timesteps 50000 --num-envs 4 --out runs/isaac_place_m16 --seed 0 \
+  --delta-q-scale 0.03 --lift-height 0.03 \
+  --place-tol-xy 0.12 --place-tol-z 0.04 --place-stable-steps 2 \
+  --max-episode-steps 160
+# checkpoint: $REPO/runs/isaac_place_m16/ppo_isaac_place.zip
+
+./isaaclab.sh -p $REPO/scripts/eval_isaac_place.py --headless \
+  --checkpoint runs/isaac_place_m16/ppo_isaac_place.zip \
+  --episodes 20 --num-envs 1 --delta-q-scale 0.03 --lift-height 0.03 \
+  --place-tol-xy 0.12 --place-tol-z 0.04 --place-stable-steps 2 \
+  --out runs/isaac_place_m16/eval_summary.json
+```
+
+**本机参考（RTX 4070 Ti SUPER）：** M12 Reach ~200k ≈216 FPS；M15 Grasp ~200k ≈160 FPS；M16 Place 50k ≈153 FPS。闭环冒烟量级可用 `--timesteps 8192`。
 
 ---
 
